@@ -397,7 +397,7 @@ def salva_chat(cid, ruolo, testo):
 
 @app.route("/welcome")
 def welcome():
-    return jsonify({"text": "Ciao! Sono Sophie, l'assistente virtuale di Starpizza.<br><br>Come posso aiutarti oggi?"})
+    return jsonify({"text": "Ciao! Sono Sophie, l'assistente virtuale di Starpizza. 👋<br><br>Sono ancora in fase di apprendimento e miglioro ogni giorno grazie alle conversazioni con i clienti.<br><br>Come posso aiutarti? E se vuoi essere ricontattato dal nostro team, dimmi anche la tua email!"})
 
 
 @app.route("/")
@@ -525,11 +525,17 @@ def chat():
         "- Adatta il registro al cliente\n"
         "- REGOLA ASSOLUTA: rispondi SEMPRE nella stessa lingua del cliente\n"
         "- Ricorda il filo della conversazione\n\n"
-        "REGOLE:\n"
+        "REGOLE IMPORTANTI:\n"
         f"- {note}{prod_note}\n"
         "- NON inventare prezzi, dimensioni o specifiche tecniche\n"
         "- NON menzionare mai il nome del produttore o brand\n"
         "- Per prezzi rimanda al sito o al team Starpizza\n"
+        "- RACCOLTA EMAIL: se il cliente non ha ancora fornito la sua email in questa conversazione, "
+        "chiedila in modo naturale entro i primi 2 messaggi. Esempio: "
+        "'Per farti ricontattare dal nostro team con un preventivo personalizzato, puoi lasciarmi la tua email?' "
+        "Una volta che l'hai raccolta, NON chiederla di nuovo.\n"
+        "- TRASPARENZA: puoi dire al cliente che sei un assistente virtuale in fase di apprendimento "
+        "e che le conversazioni vengono seguite dal team Starpizza per migliorare il servizio.\n"
         + docs_ctx + email_ctx + products_ctx + correzioni_ctx
     )
 
