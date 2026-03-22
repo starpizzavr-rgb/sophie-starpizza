@@ -144,50 +144,51 @@ HTML = """<!DOCTYPE html>
 <title>Sophie - Starpizza</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; display: flex; flex-direction: column; height: 100vh; font-size: 16px; }
-header { background: #1a1a2e; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a2a4a; }
-.hlogo { display: flex; align-items: center; gap: 10px; }
-.hav { width: 38px; height: 38px; background: linear-gradient(135deg, #a78bfa, #7c3aed); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #fff; font-size: 1.1rem; }
-.hname h1 { font-size: 1.15rem; margin: 0; }
-.hname p { font-size: 0.85rem; color: #6dbf6d; margin: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; color: #222; display: flex; flex-direction: column; height: 100vh; font-size: 16px; }
+header { background: #c0392b; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.hlogo { display: flex; align-items: center; gap: 12px; }
+.hav { width: 40px; height: 40px; background: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #c0392b; font-size: 1.2rem; }
+.hname h1 { font-size: 1.15rem; margin: 0; color: white; }
+.hname p { font-size: 0.82rem; color: rgba(255,255,255,0.85); margin: 0; }
 .hright { display: flex; align-items: center; gap: 8px; }
-.hright span { font-size: 0.82rem; color: #444; }
-#rbtn { background: none; border: 1px solid #333; color: #666; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
-#rbtn:hover { border-color: #a78bfa; color: #a78bfa; }
-#chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.hright span { font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+#rbtn { background: none; border: 1px solid rgba(255,255,255,0.4); color: rgba(255,255,255,0.8); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+#rbtn:hover { border-color: white; color: white; }
+#chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; background: #f9f9f9; }
 .row { display: flex; align-items: flex-end; gap: 8px; }
 .row.user { flex-direction: row-reverse; }
-.mav { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; flex-shrink: 0; font-weight: bold; }
-.mav.s { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #fff; }
-.mav.u { background: #2d2d5e; color: #aaa; }
-.bub { max-width: 70%; padding: 13px 17px; border-radius: 14px; font-size: 1.05rem; line-height: 1.75; white-space: pre-wrap; }
-.bub.s { background: #1e1e1e; border: 1px solid #2a2a4a; border-bottom-left-radius: 3px; }
-.bub.u { background: #2d2d5e; border-bottom-right-radius: 3px; }
-.bub.loading { color: #555; font-style: italic; }
-.src { margin-top: 7px; padding-top: 7px; border-top: 1px solid #222; font-size: 0.8rem; color: #555; display: flex; flex-wrap: wrap; gap: 4px; }
-.tag { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 0.78rem; }
-.td { background: #1a2a1a; color: #4a9a4a; }
-.te { background: #1a1a2e; color: #6a6abf; }
-.tn { background: #2a1a1a; color: #9a4a4a; }
+.mav { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; flex-shrink: 0; font-weight: bold; }
+.mav.s { background: #c0392b; color: white; }
+.mav.u { background: #ddd; color: #666; }
+.bub { max-width: 72%; padding: 12px 16px; border-radius: 16px; font-size: 1rem; line-height: 1.65; white-space: pre-wrap; }
+.bub.s { background: white; border: 1px solid #e0e0e0; border-bottom-left-radius: 4px; color: #222; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+.bub.u { background: #c0392b; color: white; border-bottom-right-radius: 4px; }
+.bub.loading { color: #aaa; font-style: italic; background: white; border: 1px solid #e0e0e0; }
+.src { margin-top: 7px; padding-top: 7px; border-top: 1px solid #eee; font-size: 0.75rem; color: #aaa; display: flex; flex-wrap: wrap; gap: 4px; }
+.tag { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 0.72rem; }
+.td { background: #eafaea; color: #3a8a3a; }
+.te { background: #eaf0fa; color: #3a5aaa; }
 .prow { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
-.pcard { background: #16213e; border: 1px solid #2a2a4a; border-radius: 8px; padding: 9px 14px; font-size: 0.88rem; text-decoration: none; color: #a78bfa; display: inline-block; transition: all 0.2s; }
-.pcard:hover { background: #1e2d5e; border-color: #a78bfa; }
-.pcard strong { display: block; color: #e0e0e0; font-size: 0.92rem; margin-top: 2px; }
-#foot { padding: 14px 20px; background: #111; border-top: 1px solid #1e1e1e; display: flex; gap: 10px; }
-#inp { flex: 1; background: #1e1e1e; border: 1px solid #2a2a2a; color: #e0e0e0; padding: 12px 18px; border-radius: 22px; font-size: 1.05rem; outline: none; }
-#inp:focus { border-color: #7c3aed; }
-#sbtn { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #fff; border: none; width: 44px; height: 44px; border-radius: 50%; cursor: pointer; font-size: 1.2rem; flex-shrink: 0; }
-#sbtn:disabled { opacity: 0.3; cursor: not-allowed; }
+.pcard { background: #fff5f5; border: 1px solid #f0c0c0; border-radius: 8px; padding: 8px 13px; font-size: 0.85rem; text-decoration: none; color: #c0392b; display: inline-block; transition: all 0.2s; }
+.pcard:hover { background: #c0392b; color: white; border-color: #c0392b; }
+.pcard strong { display: block; color: #333; font-size: 0.88rem; margin-top: 2px; }
+.pcard:hover strong { color: white; }
+#foot { padding: 12px 16px; background: white; border-top: 1px solid #eee; display: flex; gap: 10px; align-items: center; }
+#inp { flex: 1; background: #f5f5f5; border: 1.5px solid #ddd; color: #222; padding: 11px 18px; border-radius: 24px; font-size: 1rem; outline: none; transition: border 0.2s; }
+#inp:focus { border-color: #c0392b; background: white; }
+#inp::placeholder { color: #bbb; }
+#sbtn { background: #c0392b; color: white; border: none; width: 44px; height: 44px; border-radius: 50%; cursor: pointer; font-size: 1.2rem; flex-shrink: 0; transition: background 0.2s; }
+#sbtn:hover { background: #a93226; }
+#sbtn:disabled { opacity: 0.35; cursor: not-allowed; }
 </style>
 </head>
 <body>
 <header>
   <div class="hlogo">
     <div class="hav">S</div>
-    <div class="hname"><h1>Sophie</h1><p>Online &mdash; Assistente virtuale Starpizza</p></div>
+    <div class="hname"><h1>Sophie</h1><p>Assistente virtuale Starpizza &mdash; Online</p></div>
   </div>
   <div class="hright">
-    <span>powered by Arcanum</span>
     <button id="rbtn" onclick="resetChat()">Nuova chat</button>
   </div>
 </header>
