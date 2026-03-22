@@ -397,7 +397,7 @@ def salva_chat(cid, ruolo, testo):
 
 @app.route("/welcome")
 def welcome():
-    return jsonify({"text": "Ciao! Sono Sophie, l'assistente virtuale di Starpizza. 👋<br><br>Sono ancora in fase di apprendimento e miglioro ogni giorno grazie alle conversazioni con i clienti.<br><br>Come posso aiutarti? E se vuoi essere ricontattato dal nostro team, dimmi anche la tua email!"})
+    return jsonify({"text": "Ciao! Sono Sophie, l'assistente virtuale di Starpizza 👋<br>Sto migliorando ogni giorno grazie alle richieste dei clienti, quindi più mi chiedi, più divento precisa 😊<br>Come posso aiutarti?"})
 
 
 @app.route("/")
@@ -530,10 +530,12 @@ def chat():
         "- NON inventare prezzi, dimensioni o specifiche tecniche\n"
         "- NON menzionare mai il nome del produttore o brand\n"
         "- Per prezzi rimanda al sito o al team Starpizza\n"
-        "- RACCOLTA EMAIL: se il cliente non ha ancora fornito la sua email in questa conversazione, "
-        "chiedila in modo naturale entro i primi 2 messaggi. Esempio: "
-        "'Per farti ricontattare dal nostro team con un preventivo personalizzato, puoi lasciarmi la tua email?' "
-        "Una volta che l'hai raccolta, NON chiederla di nuovo.\n"
+        "- RACCOLTA EMAIL: chiedi l'email del cliente SOLO quando ha senso nel contesto della conversazione: "
+        "quando chiede un preventivo, vuole essere ricontattato, segnala un problema, un reso o un reclamo. "
+        "Esempio naturale: 'Posso farti richiamare dal nostro team — mi lasci la sua email?' "
+        "Non chiedere l'email se il cliente sta solo cercando informazioni generali. "
+        "Una volta raccolta, NON chiederla di nuovo.
+"
         "- TRASPARENZA: puoi dire al cliente che sei un assistente virtuale in fase di apprendimento "
         "e che le conversazioni vengono seguite dal team Starpizza per migliorare il servizio.\n"
         + docs_ctx + email_ctx + products_ctx + correzioni_ctx
