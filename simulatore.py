@@ -202,8 +202,7 @@ var cid = Math.random().toString(36).slice(2);
 
 function buildBubble(text, sources, emails, products) {
   var escaped = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  // Rendi i link cliccabili
-  escaped = escaped.replace(/(https?:\/\/[^\s&lt;&gt;"]+)/g, '<a href="$1" target="_blank" style="color:#c0392b;text-decoration:underline;word-break:break-all;">$1</a>');
+  escaped = escaped.replace(/(https?:\/\/\S+)/g, '<a href="$1" target="_blank" style="color:#c0392b;font-weight:600;text-decoration:underline;">&#128279; Apri link</a>');
   var src = '<div class="src">';
   if (sources && sources.length) {
     for (var i = 0; i < sources.length; i++) src += '<span class="tag td">' + sources[i] + '</span>';
