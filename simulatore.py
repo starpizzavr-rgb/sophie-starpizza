@@ -671,35 +671,38 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
             classe = "cliente" if ruolo == "cliente" else "sophie"
             html += f'<div class="msg {classe}">{testo}<div class="ts">{ts.strftime("%H:%M")}</div></div>' 
 
-        # Box intervento umano
-        dom_escaped = ultima_domanda.replace("'", "\'").replace('"', '&quot;')
-        risp_escaped = ultima_risposta.replace("'", "\'").replace('"', '&quot;')
-        html += f'''</div>
-  <div class="intervieni">
-    <label>✏️ Correggi l'ultima risposta di Sophie (Sophie imparerà per il futuro):</label>
-    <textarea id="corr_{ultimo_id}" placeholder="Scrivi qui la risposta migliore...">{ultima_risposta}</textarea>
-    <button class="btn-correggi" onclick="salvaCorrezione('{ultimo_id}', '{dom_escaped}', '{risp_escaped}')">💾 Salva correzione</button>
-    <span class="ok" id="ok_{ultimo_id}">✅ Salvata!</span>
-  </div>
-</div>'''
+        corr_id = str(ultimo_id) if ultimo_id else 'none'
+        dom_safe = ultima_domanda.replace('"', '&quot;')
+        risp_safe = ultima_risposta.replace('"', '&quot;').replace('<','&lt;').replace('>','&gt;')
+        html += '</div>'
+        html += '<div class="intervieni">'
+        html += '<label>✏️ Correggi ultima risposta Sophie:</label>'
+        html += '<textarea id="corr_' + corr_id + '">' + risp_safe + '</textarea>'
+        html += '<input type="hidden" id="dom_' + corr_id + '" value="' + dom_safe + '">'
+        html += '<input type="hidden" id="orig_' + corr_id + '" value="' + risp_safe + '">'
+        html += '<button class="btn-correggi" onclick="salvaCorrezione(\'' + corr_id + '\')">💾 Salva correzione</button>'
+        html += '<span id="ok_' + corr_id + '" style="display:none;color:#27ae60;margin-left:8px;">✅ Salvata!</span>'
+        html += '</div></div>'
 
     html += """
 <p class="refresh">🔄 <a href="/admin/chat">Aggiorna pagina</a> per vedere nuove conversazioni</p>
 </div>
 <script>
-function salvaCorrezione(msgId, domanda, rispostaOriginale) {
+function salvaCorrezione(msgId) {
   var testo = document.getElementById('corr_' + msgId).value.trim();
+  var domanda = document.getElementById('dom_' + msgId) ? document.getElementById('dom_' + msgId).value : '';
+  var originale = document.getElementById('orig_' + msgId) ? document.getElementById('orig_' + msgId).value : '';
   if (!testo) { alert('Scrivi una correzione prima di salvare!'); return; }
   fetch('/admin/correggi', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({correzione: testo, domanda: domanda, risposta_originale: rispostaOriginale})
+    body: JSON.stringify({correzione: testo, domanda: domanda, risposta_originale: originale})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) {
       document.getElementById('ok_' + msgId).style.display = 'inline';
       setTimeout(function() { document.getElementById('ok_' + msgId).style.display = 'none'; }, 3000);
     } else {
-      alert('Errore nel salvataggio: ' + (d.errore || 'riprova'));
+      alert('Errore: ' + (d.errore || 'riprova'));
     }
   }).catch(function() { alert('Errore di connessione'); });
 }
