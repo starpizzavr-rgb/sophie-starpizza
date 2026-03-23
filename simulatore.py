@@ -690,7 +690,8 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
 </div>
 <script>
 function salvaCorrezione(msgId) {
-  var testo = document.getElementById('corr_' + msgId).value.trim();
+  var textarea = document.getElementById('corr_' + msgId);
+  var testo = textarea.value.trim();
   var domanda = document.getElementById('dom_' + msgId) ? document.getElementById('dom_' + msgId).value : '';
   var originale = document.getElementById('orig_' + msgId) ? document.getElementById('orig_' + msgId).value : '';
   if (!testo) { alert('Scrivi una correzione prima di salvare!'); return; }
@@ -700,10 +701,18 @@ function salvaCorrezione(msgId) {
     body: JSON.stringify({correzione: testo, domanda: domanda, risposta_originale: originale})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) {
-      document.getElementById('ok_' + msgId).style.display = 'inline';
-      setTimeout(function() { document.getElementById('ok_' + msgId).style.display = 'none'; }, 3000);
+      // Aggiorna il campo hidden orig_ con il nuovo testo salvato
+      var origEl = document.getElementById('orig_' + msgId);
+      if (origEl) origEl.value = testo;
+      // Colora il bordo del textarea in verde per conferma visiva
+      textarea.style.border = '2px solid #27ae60';
+      textarea.style.background = '#f0fff0';
+      var okEl = document.getElementById('ok_' + msgId);
+      if (okEl) { okEl.style.display = 'inline'; }
+      // Non nascondere il verde - rimane visibile finche non si aggiorna la pagina
     } else {
       alert('Errore: ' + (d.errore || 'riprova'));
+      textarea.style.border = '2px solid #c0392b';
     }
   }).catch(function() { alert('Errore di connessione'); });
 }
