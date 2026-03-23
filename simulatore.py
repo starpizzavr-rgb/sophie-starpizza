@@ -528,3 +528,29 @@ def chat():
         f"- {note}{prod_note}\n"
         + docs_ctx + email_ctx + products_ctx + correzioni_ctx
     )
+    history.append({"role": "user", "content": message})
+
+    try:
+        msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            temperature=0.4,
+            system=system,
+            messages=history
+        )
+        response = msg.content[0].text.strip()
+        history.append({"role": "assistant", "content": response})
+        if len(history) > 40:
+            histories[cid] = history[-40:]
+        # Salva conversazione nel DB
+        salva_chat(cid, "cliente", message)
+        salva_chat(cid, "sophie", response)
+        return jsonify({
+            "response":    response,
+            "doc_sources": doc_sources,
+            "email_count": len(emails),
+            "products":    products
+        })
+    except Exception as e:
+        history.pop()
+        return jsonify({"response": f"Errore: {str(e)}", "doc_sources": [], "email_count": 0, "products": []})
