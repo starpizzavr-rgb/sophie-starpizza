@@ -658,14 +658,17 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
         ultima_domanda = ""
         ultima_risposta = ""
         ultimo_id = None
-        for mid, ruolo, testo, ts in reversed(messaggi):
-            classe = "cliente" if ruolo == "cliente" else "sophie"
-            html += f'<div class="msg {classe}">{testo}<div class="ts">{ts.strftime("%H:%M")}</div></div>'
-            if ruolo == "cliente":
-                ultima_domanda = testo
-            if ruolo == "sophie":
+        # Prima trova l'ultimo messaggio Sophie (piu recente = primo nella lista originale)
+        for mid, ruolo, testo, ts in messaggi:
+            if ruolo == "sophie" and ultimo_id is None:
                 ultima_risposta = testo
                 ultimo_id = mid
+            if ruolo == "cliente" and not ultima_domanda:
+                ultima_domanda = testo
+        # Poi mostra tutti i messaggi in ordine cronologico
+        for mid, ruolo, testo, ts in reversed(messaggi):
+            classe = "cliente" if ruolo == "cliente" else "sophie"
+            html += f'<div class="msg {classe}">{testo}<div class="ts">{ts.strftime("%H:%M")}</div></div>' 
 
         # Box intervento umano
         html += f'''</div>
