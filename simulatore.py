@@ -672,11 +672,13 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
             html += f'<div class="msg {classe}">{testo}<div class="ts">{ts.strftime("%H:%M")}</div></div>' 
 
         # Box intervento umano
+        dom_escaped = ultima_domanda.replace("'", "\'").replace('"', '&quot;')
+        risp_escaped = ultima_risposta.replace("'", "\'").replace('"', '&quot;')
         html += f'''</div>
   <div class="intervieni">
     <label>✏️ Correggi l'ultima risposta di Sophie (Sophie imparerà per il futuro):</label>
     <textarea id="corr_{ultimo_id}" placeholder="Scrivi qui la risposta migliore...">{ultima_risposta}</textarea>
-    <button class="btn-correggi" onclick="salvaCorrezione({ultimo_id}, '{sid}')">💾 Salva correzione</button>
+    <button class="btn-correggi" onclick="salvaCorrezione('{ultimo_id}', '{dom_escaped}', '{risp_escaped}')">💾 Salva correzione</button>
     <span class="ok" id="ok_{ultimo_id}">✅ Salvata!</span>
   </div>
 </div>'''
@@ -685,18 +687,21 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
 <p class="refresh">🔄 <a href="/admin/chat">Aggiorna pagina</a> per vedere nuove conversazioni</p>
 </div>
 <script>
-function salvaCorrezione(msgId, sid) {
-  var testo = document.getElementById('corr_' + msgId).value;
+function salvaCorrezione(msgId, domanda, rispostaOriginale) {
+  var testo = document.getElementById('corr_' + msgId).value.trim();
+  if (!testo) { alert('Scrivi una correzione prima di salvare!'); return; }
   fetch('/admin/correggi', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({msg_id: msgId, correzione: testo, session_id: sid})
+    body: JSON.stringify({correzione: testo, domanda: domanda, risposta_originale: rispostaOriginale})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) {
       document.getElementById('ok_' + msgId).style.display = 'inline';
       setTimeout(function() { document.getElementById('ok_' + msgId).style.display = 'none'; }, 3000);
+    } else {
+      alert('Errore nel salvataggio: ' + (d.errore || 'riprova'));
     }
-  });
+  }).catch(function() { alert('Errore di connessione'); });
 }
 </script>
 </body></html>"""
@@ -707,43 +712,34 @@ function salvaCorrezione(msgId, sid) {
 def admin_correggi():
     """Salva la correzione umana e la usa come esempio per Sophie."""
     data       = request.json or {}
-    msg_id     = data.get("msg_id")
     correzione = data.get("correzione", "").strip()
-    session_id = data.get("session_id", "")
+    domanda    = data.get("domanda", "").strip()
+    risposta_originale = data.get("risposta_originale", "").strip()
 
     if not correzione:
-        return jsonify({"ok": False})
+        return jsonify({"ok": False, "errore": "correzione vuota"})
 
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur  = conn.cursor()
-
-        # Trova la domanda del cliente nella stessa sessione
         cur.execute("""
-            SELECT testo FROM chats
-            WHERE session_id = %s AND ruolo = 'cliente'
-            ORDER BY creato_il DESC LIMIT 1
-        """, (session_id,))
-        row = cur.fetchone()
-        domanda = row[0] if row else ""
-
-        # Trova la risposta originale di Sophie
-        cur.execute("SELECT testo FROM chats WHERE id = %s", (msg_id,))
-        row2 = cur.fetchone()
-        risposta_originale = row2[0] if row2 else ""
-
-        # Salva nella tabella correzioni
+            CREATE TABLE IF NOT EXISTS correzioni (
+                id SERIAL PRIMARY KEY, domanda_cliente TEXT,
+                risposta_sophie TEXT, risposta_corretta TEXT,
+                creato_il TIMESTAMP DEFAULT NOW()
+            )
+        """)
         cur.execute("""
             INSERT INTO correzioni (domanda_cliente, risposta_sophie, risposta_corretta)
             VALUES (%s, %s, %s)
         """, (domanda, risposta_originale, correzione))
-
         conn.commit()
         cur.close(); conn.close()
+        print(f"Correzione salvata OK: {domanda[:50]}")
         return jsonify({"ok": True})
     except Exception as e:
         print(f"Errore correzione: {e}")
-        return jsonify({"ok": False})
+        return jsonify({"ok": False, "errore": str(e)})
 
 
 if __name__ == "__main__":
