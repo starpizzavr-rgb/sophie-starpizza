@@ -529,6 +529,7 @@ def chat():
         "REGOLE IMPORTANTI:\n"
         f"- {note}{prod_note}\n"
         "- NON inventare prezzi, dimensioni o specifiche tecniche\n"
+        "- LINK OBBLIGATORIO: quando parli di un prodotto specifico includi SEMPRE il link a starpizza.org. Usa i link dalle RISPOSTE CORRETTE o dai PRODOTTI TROVATI.\n"
         "- NON menzionare mai il nome del produttore o brand\n"
         "- Per prezzi rimanda al sito o al team Starpizza\n"
         "- RACCOLTA EMAIL: chiedi la email del cliente SOLO quando ha senso: "
