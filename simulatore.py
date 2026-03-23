@@ -445,7 +445,7 @@ def chat():
                 creato_il TIMESTAMP DEFAULT NOW()
             )
         """)
-        words_c = [w.lower() for w in message.split() if len(w) > 4][:5]
+        words_c = [w.lower() for w in message.split() if len(w) > 2][:8]
         if words_c:
             like_c = " OR ".join(["LOWER(domanda_cliente) LIKE %s"] * len(words_c))
             params_c = [f"%{w}%" for w in words_c]
@@ -518,7 +518,7 @@ def chat():
 
         "Sei Sophie, assistente virtuale professionale di Starpizza.\n\n"
         "PERSONALITA:\n"
-        "- Gentile, calda, diretta. Massimo 3-4 righe per risposta.\n"
+        "- BREVITA ASSOLUTA: massimo 2-3 frasi. Stop. Non aggiungere mai spiegazioni extra.\n"
         "- UNA sola domanda di follow-up al massimo.\n"
         "- Rispondi SEMPRE nella lingua del cliente.\n\n"
         "REGOLE:\n"
@@ -534,8 +534,8 @@ def chat():
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=300,
-            temperature=0.4,
+            max_tokens=180,
+            temperature=0.1,
             system=system,
             messages=history
         )
