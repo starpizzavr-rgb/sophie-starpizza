@@ -459,7 +459,7 @@ def chat():
             if rows_c:
                 correzioni_ctx = "\n\n=== RISPOSTE CORRETTE DAL TEAM STARPIZZA (usa come riferimento) ===\n"
                 for dom, risp in rows_c:
-                    correzioni_ctx += f"\nDomanda: {dom[:200]}\nRisposta ideale: {risp[:400]}\n"
+                    correzioni_ctx += f"\nDomanda: {dom[:300]}\nRisposta ideale: {risp[:1000]}\n"
         conn_c.commit()
         cur_c.close(); conn_c.close()
     except Exception as e:
