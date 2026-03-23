@@ -559,3 +559,152 @@ def chat():
     except Exception as e:
         history.pop()
         return jsonify({"response": f"Errore: {str(e)}", "doc_sources": [], "email_count": 0, "products": []})
+
+
+@app.route("/admin/chat")
+def admin_chat():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chats (
+                id SERIAL PRIMARY KEY, session_id VARCHAR(64),
+                ruolo VARCHAR(16), testo TEXT, creato_il TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS correzioni (
+                id SERIAL PRIMARY KEY, domanda_cliente TEXT,
+                risposta_sophie TEXT, risposta_corretta TEXT,
+                creato_il TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        cur.execute("SELECT id, session_id, ruolo, testo, creato_il FROM chats ORDER BY creato_il DESC LIMIT 300")
+        righe = cur.fetchall()
+        cur.execute("SELECT COUNT(*) FROM correzioni")
+        n_correzioni = cur.fetchone()[0]
+        cur.close(); conn.close()
+    except Exception as e:
+        return f"Errore DB: {e}"
+
+    sessioni = {}
+    for mid, sid, ruolo, testo, ts in righe:
+        if sid not in sessioni:
+            sessioni[sid] = []
+        sessioni[sid].append((mid, ruolo, testo, ts))
+
+    html = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sophie Admin</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
+.topbar { background: #c0392b; color: white; padding: 14px 24px; display: flex; justify-content: space-between; }
+.topbar h1 { font-size: 1.2rem; }
+.container { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+.stats { display: flex; gap: 16px; margin-bottom: 24px; }
+.stat { background: white; border-radius: 10px; padding: 14px 20px; flex: 1; box-shadow: 0 2px 6px rgba(0,0,0,0.07); }
+.stat h3 { font-size: 1.6rem; color: #c0392b; }
+.stat p { font-size: 0.8rem; color: #888; margin-top: 4px; }
+.sessione { background: white; border-radius: 12px; padding: 18px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+.sess-header { font-size: 0.8rem; color: #aaa; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+.wrap { display: flex; flex-direction: column; gap: 8px; }
+.msg { padding: 10px 14px; border-radius: 10px; max-width: 80%; font-size: 0.95rem; line-height: 1.5; }
+.cliente { background: #c0392b; color: white; align-self: flex-end; }
+.sophie { background: #f0f0f0; color: #222; align-self: flex-start; }
+.ts { font-size: 0.7rem; opacity: 0.6; margin-top: 3px; }
+.intervieni { margin-top: 16px; border-top: 1px solid #eee; padding-top: 14px; }
+.intervieni label { font-size: 0.85rem; color: #555; font-weight: 600; display: block; margin-bottom: 6px; }
+.intervieni textarea { width: 100%; border: 1.5px solid #ddd; border-radius: 8px; padding: 10px; font-size: 0.95rem; resize: vertical; min-height: 80px; font-family: inherit; }
+.btn-correggi { background: #c0392b; color: white; border: none; padding: 9px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; margin-top: 8px; }
+.refresh { font-size: 0.8rem; color: #888; text-align: center; margin-top: 20px; }
+</style></head><body>
+<div class="topbar"><h1>🔴 Sophie — Pannello Controllo</h1><span>""" + str(len(sessioni)) + """ sessioni | """ + str(n_correzioni) + """ correzioni</span></div>
+<div class="container">
+<div class="stats">
+<div class="stat"><h3>""" + str(len(sessioni)) + """</h3><p>Conversazioni</p></div>
+<div class="stat"><h3>""" + str(sum(len(v) for v in sessioni.values())) + """</h3><p>Messaggi</p></div>
+<div class="stat"><h3>""" + str(n_correzioni) + """</h3><p>Correzioni</p></div>
+</div>
+"""
+    for sid, messaggi in sessioni.items():
+        ts_inizio = messaggi[-1][3].strftime("%d/%m/%Y %H:%M") if messaggi else ""
+        ultima_risposta = ""
+        ultima_domanda = ""
+        ultimo_id = None
+        for mid, ruolo, testo, ts in messaggi:
+            if ruolo == "sophie" and ultimo_id is None:
+                ultima_risposta = testo
+                ultimo_id = mid
+            if ruolo == "cliente" and not ultima_domanda:
+                ultima_domanda = testo
+
+        html += f'<div class="sessione"><div class="sess-header">Sessione {sid[:16]}... — {ts_inizio}</div><div class="wrap">'
+        for mid, ruolo, testo, ts in reversed(messaggi):
+            classe = "cliente" if ruolo == "cliente" else "sophie"
+            html += f'<div class="msg {classe}">{testo}<div class="ts">{ts.strftime("%H:%M")}</div></div>'
+
+        corr_id = str(ultimo_id) if ultimo_id else "none"
+        dom_safe = ultima_domanda.replace('"', '&quot;')
+        risp_safe = ultima_risposta.replace('"', '&quot;').replace('<','&lt;').replace('>','&gt;')
+        html += '</div>'
+        html += '<div class="intervieni"><label>✏️ Correggi ultima risposta Sophie:</label>'
+        html += f'<textarea id="corr_{corr_id}">{risp_safe}</textarea>'
+        html += f'<input type="hidden" id="dom_{corr_id}" value="{dom_safe}">'
+        html += f'<input type="hidden" id="orig_{corr_id}" value="{risp_safe}">'
+        html += f'<button class="btn-correggi" onclick="salvaCorrezione(\'{corr_id}\')">💾 Salva correzione</button>'
+        html += f'<span id="ok_{corr_id}" style="display:none;color:#27ae60;margin-left:8px;">✅ Salvata!</span>'
+        html += '</div></div>'
+
+    html += """<p class="refresh">🔄 <a href="/admin/chat">Aggiorna</a></p></div>
+<script>
+function salvaCorrezione(msgId) {
+  var textarea = document.getElementById('corr_' + msgId);
+  var testo = textarea.value.trim();
+  var domanda = document.getElementById('dom_' + msgId) ? document.getElementById('dom_' + msgId).value : '';
+  var originale = document.getElementById('orig_' + msgId) ? document.getElementById('orig_' + msgId).value : '';
+  if (!testo) { alert('Scrivi una correzione!'); return; }
+  fetch('/admin/correggi', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({correzione: testo, domanda: domanda, risposta_originale: originale})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      textarea.style.border = '2px solid #27ae60';
+      textarea.style.background = '#f0fff0';
+      document.getElementById('ok_' + msgId).style.display = 'inline';
+    } else { alert('Errore: ' + (d.errore || 'riprova')); }
+  }).catch(function() { alert('Errore connessione'); });
+}
+</script></body></html>"""
+    return html
+
+
+@app.route("/admin/correggi", methods=["POST"])
+def admin_correggi():
+    data = request.json or {}
+    correzione = data.get("correzione", "").strip()
+    domanda = data.get("domanda", "").strip()
+    risposta_originale = data.get("risposta_originale", "").strip()
+    if not correzione:
+        return jsonify({"ok": False, "errore": "correzione vuota"})
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS correzioni (
+                id SERIAL PRIMARY KEY, domanda_cliente TEXT,
+                risposta_sophie TEXT, risposta_corretta TEXT,
+                creato_il TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            INSERT INTO correzioni (domanda_cliente, risposta_sophie, risposta_corretta)
+            VALUES (%s, %s, %s)
+        """, (domanda, risposta_originale, correzione))
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"Correzione salvata: {domanda[:50]}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"Errore correzione: {e}")
+        return jsonify({"ok": False, "errore": str(e)})
