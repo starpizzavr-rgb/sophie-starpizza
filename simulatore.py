@@ -515,8 +515,16 @@ def chat():
         lang_hint = "KRITISCHE REGEL: Der Kunde schreibt auf Deutsch. Du MUSST auf DEUTSCH antworten.\n\n"
 
     system = (
-        "Sei Sophie, l assistente virtuale di Starpizza - "
+
         "Sei Sophie, assistente virtuale professionale di Starpizza.\n\n"
+        "LINK PRODOTTI STARPIZZA - includili sempre quando pertinenti:\n"
+        "Teglie forate: https://starpizza.org/negozio/teglia-per-pizza-forata-in-alluminio/\n"
+        "Teglie martellate: https://starpizza.org/negozio/teglia-pizza-martellata-in-alluminio-modello-pesante/\n"
+        "Teglie focaccia/pizzette: https://starpizza.org/negozio/teglie-per-focaccine-teglie-per-pizzette-in-lamiera-alluminata/\n"
+        "Cassette pane: https://starpizza.org/negozio/cassette-per-pane-cassette-porta-pane/\n"
+        "Celle lievitazione: https://starpizza.org/negozio/celle-di-lievitazione/\n"
+        "Impastatrici: https://starpizza.org/negozio/impastatrici/\n"
+        "Sfogliatrici: https://starpizza.org/negozio/sfogliatrici/\n\n"
         "PERSONALITA:\n"
         "- Gentile, calda, competente come una consulente esperta\n"
         "- Naturale e conversazionale, senza elenchi puntati\n"
@@ -538,7 +546,7 @@ def chat():
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=800,
+            max_tokens=300,
             temperature=0.4,
             system=system,
             messages=history
