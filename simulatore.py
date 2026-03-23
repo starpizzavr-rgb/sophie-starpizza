@@ -445,17 +445,40 @@ def chat():
                 creato_il TIMESTAMP DEFAULT NOW()
             )
         """)
+        # Ricerca full-text PostgreSQL - molto piu intelligente delle keyword
         words_c = [w.lower() for w in message.split() if len(w) > 2][:8]
+        rows_c = []
         if words_c:
+            # Prima prova: ricerca esatta con LIKE su tutte le parole
             like_c = " OR ".join(["LOWER(domanda_cliente) LIKE %s"] * len(words_c))
             params_c = [f"%{w}%" for w in words_c]
             cur_c.execute(f"""
                 SELECT domanda_cliente, risposta_corretta
                 FROM correzioni
                 WHERE {like_c}
-                ORDER BY creato_il DESC LIMIT 3
+                ORDER BY creato_il DESC LIMIT 5
             """, params_c)
             rows_c = cur_c.fetchall()
+
+            # Seconda prova: se non trova nulla, cerca anche nella risposta corretta
+            if not rows_c:
+                like_r = " OR ".join(["LOWER(risposta_corretta) LIKE %s"] * len(words_c))
+                cur_c.execute(f"""
+                    SELECT domanda_cliente, risposta_corretta
+                    FROM correzioni
+                    WHERE {like_r}
+                    ORDER BY creato_il DESC LIMIT 5
+                """, params_c)
+                rows_c = cur_c.fetchall()
+
+            # Terza prova: se ancora nulla, prendi le 3 correzioni piu recenti come contesto generale
+            if not rows_c:
+                cur_c.execute("""
+                    SELECT domanda_cliente, risposta_corretta
+                    FROM correzioni
+                    ORDER BY creato_il DESC LIMIT 3
+                """)
+                rows_c = cur_c.fetchall()
             if rows_c:
                 correzioni_ctx = "\n\n=== RISPOSTE CORRETTE DAL TEAM STARPIZZA (usa come riferimento) ===\n"
                 for dom, risp in rows_c:
