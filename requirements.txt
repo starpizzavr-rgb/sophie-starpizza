@@ -5,3 +5,4 @@ python-dotenv==1.0.1
 requests==2.32.3
 msal==1.35.1
 gunicorn==23.0.0
+numpy==1.26.4

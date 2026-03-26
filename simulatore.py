@@ -5,10 +5,41 @@ import json
 import os
 import re
 from dotenv import load_dotenv
+import numpy as np
 
 load_dotenv()
 DATABASE_URL  = os.getenv("DATABASE_URL")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+def get_embedding(text):
+    """Genera embedding OpenAI per un testo."""
+    try:
+        import urllib.request
+        import json as json_lib
+        data = json_lib.dumps({
+            "input": text[:500],
+            "model": "text-embedding-3-small"
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/embeddings",
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {OPENAI_API_KEY}"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json_lib.loads(resp.read())
+            return result["data"][0]["embedding"]
+    except Exception as e:
+        print(f"Errore embedding: {e}")
+        return None
+
+def cosine_similarity(a, b):
+    """Calcola similarita coseno tra due vettori."""
+    a, b = np.array(a), np.array(b)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10))
 INDEX_FILE    = r"C:\email-intelligence\product_index.json"
 
 client   = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
@@ -445,39 +476,48 @@ def chat():
                 creato_il TIMESTAMP DEFAULT NOW()
             )
         """)
-        # Ricerca full-text PostgreSQL - molto piu intelligente delle keyword
-        words_c = [w.lower() for w in message.split() if len(w) > 2][:8]
+        # Ricerca semantica con embeddings OpenAI
         rows_c = []
-        if words_c:
-            # Prima prova: ricerca esatta con LIKE su tutte le parole
-            like_c = " OR ".join(["LOWER(domanda_cliente) LIKE %s"] * len(words_c))
-            params_c = [f"%{w}%" for w in words_c]
-            cur_c.execute(f"""
-                SELECT domanda_cliente, risposta_corretta
-                FROM correzioni
-                WHERE {like_c}
-                ORDER BY creato_il DESC LIMIT 5
-            """, params_c)
-            rows_c = cur_c.fetchall()
+        msg_embedding = get_embedding(message) if OPENAI_API_KEY else None
 
-            # Seconda prova: se non trova nulla, cerca anche nella risposta corretta
-            if not rows_c:
-                like_r = " OR ".join(["LOWER(risposta_corretta) LIKE %s"] * len(words_c))
+        if msg_embedding:
+            # Prendi tutte le correzioni con embedding (se disponibile)
+            cur_c.execute("""
+                SELECT domanda_cliente, risposta_corretta, embedding
+                FROM correzioni
+                ORDER BY creato_il DESC
+            """)
+            all_corrections = cur_c.fetchall()
+
+            if all_corrections:
+                scored = []
+                for dom, risp, emb_json in all_corrections:
+                    if emb_json:
+                        try:
+                            emb = json.loads(emb_json)
+                            score = cosine_similarity(msg_embedding, emb)
+                            scored.append((score, dom, risp))
+                        except:
+                            pass
+                    else:
+                        # Correzioni senza embedding: usa keyword fallback
+                        if any(w.lower() in (dom or '').lower() for w in message.split() if len(w) > 2):
+                            scored.append((0.5, dom, risp))
+
+                scored.sort(reverse=True)
+                rows_c = [(dom, risp) for score, dom, risp in scored[:3] if score > 0.3]
+
+        # Fallback keyword se no OpenAI o nessun risultato semantico
+        if not rows_c:
+            words_c = [w.lower() for w in message.split() if len(w) > 2][:8]
+            if words_c:
+                like_c = " OR ".join(["LOWER(domanda_cliente) LIKE %s"] * len(words_c))
+                params_c = [f"%{w}%" for w in words_c]
                 cur_c.execute(f"""
                     SELECT domanda_cliente, risposta_corretta
-                    FROM correzioni
-                    WHERE {like_r}
-                    ORDER BY creato_il DESC LIMIT 5
-                """, params_c)
-                rows_c = cur_c.fetchall()
-
-            # Terza prova: se ancora nulla, prendi le 3 correzioni piu recenti come contesto generale
-            if not rows_c:
-                cur_c.execute("""
-                    SELECT domanda_cliente, risposta_corretta
-                    FROM correzioni
+                    FROM correzioni WHERE {like_c}
                     ORDER BY creato_il DESC LIMIT 3
-                """)
+                """, params_c)
                 rows_c = cur_c.fetchall()
             if rows_c:
                 correzioni_ctx = "\n\n=== RISPOSTE CORRETTE DAL TEAM STARPIZZA (usa come riferimento) ===\n"
