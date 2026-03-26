@@ -759,16 +759,27 @@ def admin_correggi():
             CREATE TABLE IF NOT EXISTS correzioni (
                 id SERIAL PRIMARY KEY, domanda_cliente TEXT,
                 risposta_sophie TEXT, risposta_corretta TEXT,
-                creato_il TIMESTAMP DEFAULT NOW()
+                creato_il TIMESTAMP DEFAULT NOW(),
+                embedding TEXT
             )
         """)
+        # Calcola embedding automaticamente
+        emb_json = None
+        if OPENAI_API_KEY and domanda:
+            try:
+                emb = get_embedding(domanda)
+                if emb:
+                    emb_json = json.dumps(emb)
+            except Exception as emb_err:
+                print(f"Embedding non calcolato: {emb_err}")
+
         cur.execute("""
-            INSERT INTO correzioni (domanda_cliente, risposta_sophie, risposta_corretta)
-            VALUES (%s, %s, %s)
-        """, (domanda, risposta_originale, correzione))
+            INSERT INTO correzioni (domanda_cliente, risposta_sophie, risposta_corretta, embedding)
+            VALUES (%s, %s, %s, %s)
+        """, (domanda, risposta_originale, correzione, emb_json))
         conn.commit()
         cur.close(); conn.close()
-        print(f"Correzione salvata: {domanda[:50]}")
+        print(f"Correzione salvata{'+ embedding' if emb_json else ''}: {domanda[:50]}")
         return jsonify({"ok": True})
     except Exception as e:
         print(f"Errore correzione: {e}")
