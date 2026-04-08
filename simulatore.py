@@ -15,17 +15,20 @@ ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # ============================================================
-# GOOGLE DRIVE — carica istruzioni dalla cartella Arcanum/
+# GOOGLE DRIVE — indice cartelle + lettura PDF on-demand
 # ============================================================
 
-GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN")
+GOOGLE_CLIENT_ID       = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET   = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REFRESH_TOKEN   = os.getenv("GOOGLE_REFRESH_TOKEN")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
-# Variabile globale che contiene le istruzioni lette da Drive
-DRIVE_ISTRUZIONI = ""
-DRIVE_LOCK = threading.Lock()
+# Cartelle da ignorare (non pertinenti per Sophie)
+CARTELLE_ESCLUSE = {"report meta ads", "report meta", "arcanum"}
+
+# Indice Drive: lista di {cartella, nome_file, file_id, mime}
+DRIVE_INDEX = []
+DRIVE_LOCK  = threading.Lock()
 
 def get_google_access_token():
     """Ottiene un access token fresco usando il refresh token."""
@@ -50,89 +53,200 @@ def get_google_access_token():
         print(f"Errore token Google: {e}")
         return None
 
-def leggi_file_drive(file_id, access_token):
-    """Legge il contenuto di un file .txt da Drive."""
-    try:
-        import urllib.request
-        req = urllib.request.Request(
-            f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media",
-            headers={"Authorization": f"Bearer {access_token}"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.read().decode("utf-8", errors="ignore")
-    except Exception as e:
-        print(f"Errore lettura file Drive {file_id}: {e}")
-        return ""
-
-def carica_istruzioni_drive():
-    """Legge tutti i file .txt dalla cartella Arcanum/ su Drive."""
-    global DRIVE_ISTRUZIONI
-    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, GOOGLE_DRIVE_FOLDER_ID]):
-        print("Google Drive: variabili mancanti, skip.")
-        return
-
+def lista_file_cartella(folder_id, access_token):
+    """Ritorna la lista di file in una cartella Drive."""
     try:
         import urllib.request
         import urllib.parse
-        access_token = get_google_access_token()
-        if not access_token:
-            print("Google Drive: impossibile ottenere access token.")
-            return
-
-        # Lista i file nella cartella Arcanum/
         params = urllib.parse.urlencode({
-            "q": f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false",
+            "q": f"'{folder_id}' in parents and trashed=false",
             "fields": "files(id,name,mimeType)",
-            "pageSize": "50"
+            "pageSize": "100"
         })
         req = urllib.request.Request(
             f"https://www.googleapis.com/drive/v3/files?{params}",
             headers={"Authorization": f"Bearer {access_token}"}
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            files = json.loads(resp.read()).get("files", [])
-
-        testi = []
-        for f in files:
-            nome = f.get("name", "")
-            mime = f.get("mimeType", "")
-            fid  = f.get("id", "")
-
-            # Legge file .txt
-            if nome.endswith(".txt"):
-                contenuto = leggi_file_drive(fid, access_token)
-                if contenuto.strip():
-                    testi.append(f"=== {nome} ===\n{contenuto.strip()}")
-                    print(f"Drive: caricato {nome} ({len(contenuto)} caratteri)")
-
-            # Legge file Google Docs (testo semplice)
-            elif mime == "application/vnd.google-apps.document":
-                try:
-                    req2 = urllib.request.Request(
-                        f"https://www.googleapis.com/drive/v3/files/{fid}/export?mimeType=text/plain",
-                        headers={"Authorization": f"Bearer {access_token}"}
-                    )
-                    with urllib.request.urlopen(req2, timeout=10) as resp2:
-                        contenuto = resp2.read().decode("utf-8", errors="ignore")
-                    if contenuto.strip():
-                        testi.append(f"=== {nome} ===\n{contenuto.strip()}")
-                        print(f"Drive: caricato Google Doc {nome} ({len(contenuto)} caratteri)")
-                except Exception as e:
-                    print(f"Drive: errore export Doc {nome}: {e}")
-
-        with DRIVE_LOCK:
-            DRIVE_ISTRUZIONI = "\n\n".join(testi)
-
-        print(f"Drive: {len(files)} file trovati, {len(testi)} caricati. Totale: {len(DRIVE_ISTRUZIONI)} caratteri.")
-
+            return json.loads(resp.read()).get("files", [])
     except Exception as e:
-        print(f"Errore caricamento Drive: {e}")
+        print(f"Errore lista cartella {folder_id}: {e}")
+        return []
+
+def estrai_testo_pdf(contenuto_bytes):
+    """Estrae testo da bytes PDF usando pymupdf."""
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=contenuto_bytes, filetype="pdf")
+        testo = ""
+        for page in doc:
+            testo += page.get_text()
+        doc.close()
+        return testo.strip()
+    except Exception as e:
+        print(f"Errore estrazione PDF: {e}")
+        return ""
+
+def leggi_file_drive_bytes(file_id, access_token):
+    """Scarica il contenuto binario di un file da Drive."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.read()
+    except Exception as e:
+        print(f"Errore download file {file_id}: {e}")
+        return None
+
+def leggi_file_testo(file_id, mime, access_token):
+    """Legge testo da .txt, Google Doc o PDF."""
+    try:
+        import urllib.request
+        # Google Doc → export come testo
+        if mime == "application/vnd.google-apps.document":
+            req = urllib.request.Request(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}/export?mimeType=text/plain",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.read().decode("utf-8", errors="ignore")
+        # PDF → scarica e estrai testo
+        elif mime == "application/pdf":
+            raw = leggi_file_drive_bytes(file_id, access_token)
+            if raw:
+                return estrai_testo_pdf(raw)
+            return ""
+        # .txt → scarica diretto
+        else:
+            raw = leggi_file_drive_bytes(file_id, access_token)
+            if raw:
+                return raw.decode("utf-8", errors="ignore")
+            return ""
+    except Exception as e:
+        print(f"Errore lettura file {file_id}: {e}")
+        return ""
+
+def costruisci_indice_drive():
+    """
+    Scansiona tutte le sottocartelle di Arcanum/ e costruisce
+    un indice {cartella, nome_file, file_id, mime}.
+    Non scarica i file — solo registra dove sono.
+    """
+    global DRIVE_INDEX
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, GOOGLE_DRIVE_FOLDER_ID]):
+        print("Google Drive: variabili mancanti, skip.")
+        return
+
+    access_token = get_google_access_token()
+    if not access_token:
+        print("Google Drive: impossibile ottenere access token.")
+        return
+
+    print("Drive: costruzione indice in corso...")
+    nuovo_indice = []
+
+    # Lista le sottocartelle di Arcanum/
+    elementi = lista_file_cartella(GOOGLE_DRIVE_FOLDER_ID, access_token)
+    for el in elementi:
+        nome_cartella = el.get("name", "")
+        mime          = el.get("mimeType", "")
+        fid           = el.get("id", "")
+
+        # Salta cartelle escluse
+        if nome_cartella.lower() in CARTELLE_ESCLUSE:
+            continue
+
+        # Se è una cartella, scansiona il suo contenuto
+        if mime == "application/vnd.google-apps.folder":
+            file_dentro = lista_file_cartella(fid, access_token)
+            for f in file_dentro:
+                fn   = f.get("name", "")
+                fm   = f.get("mimeType", "")
+                ffid = f.get("id", "")
+                # Accetta PDF, txt, Google Doc
+                if fm in ("application/pdf", "text/plain",
+                          "application/vnd.google-apps.document") or fn.endswith(".txt"):
+                    nuovo_indice.append({
+                        "cartella": nome_cartella,
+                        "nome":     fn,
+                        "id":       ffid,
+                        "mime":     fm
+                    })
+        # File direttamente nella root di Arcanum (txt o Google Doc)
+        elif mime in ("text/plain", "application/vnd.google-apps.document") or nome_cartella.endswith(".txt"):
+            nuovo_indice.append({
+                "cartella": "Generale",
+                "nome":     nome_cartella,
+                "id":       fid,
+                "mime":     mime
+            })
+
+    with DRIVE_LOCK:
+        DRIVE_INDEX = nuovo_indice
+
+    print(f"Drive: indice costruito — {len(nuovo_indice)} file in {len(set(x['cartella'] for x in nuovo_indice))} cartelle.")
+
+def cerca_in_drive(query, max_files=3):
+    """
+    Cerca i file Drive più pertinenti alla query,
+    li scarica e restituisce il testo estratto.
+    Esclude 'Report Meta Ads'.
+    """
+    with DRIVE_LOCK:
+        indice = list(DRIVE_INDEX)
+
+    if not indice:
+        return "", False
+
+    # Parole chiave dalla query
+    parole = [w.lower() for w in re.sub(r'[^\w\s]', ' ', query).split() if len(w) > 2]
+
+    # Calcola punteggio per ogni file in base a cartella + nome
+    scored = []
+    for entry in indice:
+        cartella_norm = entry["cartella"].lower()
+        nome_norm     = entry["nome"].lower()
+        score = 0
+        for p in parole:
+            if p in cartella_norm: score += 5
+            if p in nome_norm:     score += 3
+        if score > 0:
+            scored.append((score, entry))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [e for _, e in scored[:max_files]]
+
+    if not top:
+        return "", False
+
+    # Scarica e leggi il testo dei file selezionati
+    access_token = get_google_access_token()
+    if not access_token:
+        return "", False
+
+    testi = []
+    for entry in top:
+        testo = leggi_file_testo(entry["id"], entry["mime"], access_token)
+        if testo.strip():
+            # Prendi max 2000 caratteri per file per non sovraccaricare il prompt
+            testi.append(f"[{entry['cartella']} / {entry['nome']}]\n{testo[:2000]}")
+            print(f"Drive: letto {entry['nome']} ({len(testo)} caratteri)")
+
+    if not testi:
+        return "", False
+
+    return "\n\n".join(testi), True
 
 def aggiorna_drive_loop():
-    """Thread in background: ricarica le istruzioni da Drive ogni ora."""
+    """Thread in background: ricostruisce l'indice Drive ogni ora."""
     while True:
-        carica_istruzioni_drive()
-        time.sleep(3600)  # ogni ora
+        costruisci_indice_drive()
+        time.sleep(3600)
+
+
 
 # ============================================================
 # EMBEDDING E PRODOTTI
@@ -184,9 +298,9 @@ except Exception as e:
     print(f"ATTENZIONE: indice non trovato ({e})")
     PRODUCT_INDEX = []
 
-# Avvia caricamento Drive e thread di aggiornamento
-print("Caricamento istruzioni da Google Drive...")
-carica_istruzioni_drive()
+# Avvia costruzione indice Drive e thread di aggiornamento
+print("Costruzione indice Google Drive...")
+costruisci_indice_drive()
 t = threading.Thread(target=aggiorna_drive_loop, daemon=True)
 t.start()
 
@@ -596,10 +710,8 @@ def chat():
     emails   = get_emails(q)
     products = cerca_prodotti(q, limit=4)
 
-    # Leggi istruzioni da Drive (thread-safe)
-    with DRIVE_LOCK:
-        drive_ctx = DRIVE_ISTRUZIONI
-    drive_used = bool(drive_ctx.strip())
+    # Cerca nei PDF Drive pertinenti alla domanda
+    drive_ctx, drive_used = cerca_in_drive(q)
 
     # Recupera correzioni simili salvate dal titolare (autoapprendimento)
     correzioni_ctx = ""
@@ -799,7 +911,7 @@ def admin_chat():
 
     # Stato Drive
     with DRIVE_LOCK:
-        drive_chars = len(DRIVE_ISTRUZIONI)
+        drive_count = len(DRIVE_INDEX)
 
     html = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sophie Admin</title>
 <style>
@@ -832,7 +944,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
 <div class="stat"><h3>""" + str(len(sessioni)) + """</h3><p>Conversazioni</p></div>
 <div class="stat"><h3>""" + str(sum(len(v) for v in sessioni.values())) + """</h3><p>Messaggi</p></div>
 <div class="stat"><h3>""" + str(n_correzioni) + """</h3><p>Correzioni</p></div>
-<div class="stat drive"><h3>""" + str(drive_chars) + """</h3><p>&#128194; Caratteri da Drive</p></div>
+<div class="stat drive"><h3>""" + str(drive_count) + """</h3><p>&#128194; File Drive indicizzati</p></div>
 </div>
 """
     for sid, messaggi in sessioni.items():
