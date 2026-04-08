@@ -4,13 +4,139 @@ import anthropic
 import json
 import os
 import re
+import threading
+import time
 from dotenv import load_dotenv
 import numpy as np
 
 load_dotenv()
-DATABASE_URL  = os.getenv("DATABASE_URL")
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+DATABASE_URL   = os.getenv("DATABASE_URL")
+ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# ============================================================
+# GOOGLE DRIVE — carica istruzioni dalla cartella Arcanum/
+# ============================================================
+
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN")
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+
+# Variabile globale che contiene le istruzioni lette da Drive
+DRIVE_ISTRUZIONI = ""
+DRIVE_LOCK = threading.Lock()
+
+def get_google_access_token():
+    """Ottiene un access token fresco usando il refresh token."""
+    try:
+        import urllib.request
+        import urllib.parse
+        data = urllib.parse.urlencode({
+            "client_id":     GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "refresh_token": GOOGLE_REFRESH_TOKEN,
+            "grant_type":    "refresh_token"
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            return result.get("access_token")
+    except Exception as e:
+        print(f"Errore token Google: {e}")
+        return None
+
+def leggi_file_drive(file_id, access_token):
+    """Legge il contenuto di un file .txt da Drive."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read().decode("utf-8", errors="ignore")
+    except Exception as e:
+        print(f"Errore lettura file Drive {file_id}: {e}")
+        return ""
+
+def carica_istruzioni_drive():
+    """Legge tutti i file .txt dalla cartella Arcanum/ su Drive."""
+    global DRIVE_ISTRUZIONI
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, GOOGLE_DRIVE_FOLDER_ID]):
+        print("Google Drive: variabili mancanti, skip.")
+        return
+
+    try:
+        import urllib.request
+        import urllib.parse
+        access_token = get_google_access_token()
+        if not access_token:
+            print("Google Drive: impossibile ottenere access token.")
+            return
+
+        # Lista i file nella cartella Arcanum/
+        params = urllib.parse.urlencode({
+            "q": f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false",
+            "fields": "files(id,name,mimeType)",
+            "pageSize": "50"
+        })
+        req = urllib.request.Request(
+            f"https://www.googleapis.com/drive/v3/files?{params}",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            files = json.loads(resp.read()).get("files", [])
+
+        testi = []
+        for f in files:
+            nome = f.get("name", "")
+            mime = f.get("mimeType", "")
+            fid  = f.get("id", "")
+
+            # Legge file .txt
+            if nome.endswith(".txt"):
+                contenuto = leggi_file_drive(fid, access_token)
+                if contenuto.strip():
+                    testi.append(f"=== {nome} ===\n{contenuto.strip()}")
+                    print(f"Drive: caricato {nome} ({len(contenuto)} caratteri)")
+
+            # Legge file Google Docs (testo semplice)
+            elif mime == "application/vnd.google-apps.document":
+                try:
+                    req2 = urllib.request.Request(
+                        f"https://www.googleapis.com/drive/v3/files/{fid}/export?mimeType=text/plain",
+                        headers={"Authorization": f"Bearer {access_token}"}
+                    )
+                    with urllib.request.urlopen(req2, timeout=10) as resp2:
+                        contenuto = resp2.read().decode("utf-8", errors="ignore")
+                    if contenuto.strip():
+                        testi.append(f"=== {nome} ===\n{contenuto.strip()}")
+                        print(f"Drive: caricato Google Doc {nome} ({len(contenuto)} caratteri)")
+                except Exception as e:
+                    print(f"Drive: errore export Doc {nome}: {e}")
+
+        with DRIVE_LOCK:
+            DRIVE_ISTRUZIONI = "\n\n".join(testi)
+
+        print(f"Drive: {len(files)} file trovati, {len(testi)} caricati. Totale: {len(DRIVE_ISTRUZIONI)} caratteri.")
+
+    except Exception as e:
+        print(f"Errore caricamento Drive: {e}")
+
+def aggiorna_drive_loop():
+    """Thread in background: ricarica le istruzioni da Drive ogni ora."""
+    while True:
+        carica_istruzioni_drive()
+        time.sleep(3600)  # ogni ora
+
+# ============================================================
+# EMBEDDING E PRODOTTI
+# ============================================================
 
 def get_embedding(text):
     """Genera embedding OpenAI per un testo."""
@@ -40,10 +166,12 @@ def cosine_similarity(a, b):
     """Calcola similarita coseno tra due vettori."""
     a, b = np.array(a), np.array(b)
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10))
-INDEX_FILE    = r"C:\email-intelligence\product_index.json"
 
-client   = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-app      = Flask(__name__)
+# Percorso product_index.json compatibile con Railway
+INDEX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_index.json")
+
+client    = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+app       = Flask(__name__)
 histories = {}
 
 # Carica indice prodotti in memoria all'avvio
@@ -55,6 +183,12 @@ try:
 except Exception as e:
     print(f"ATTENZIONE: indice non trovato ({e})")
     PRODUCT_INDEX = []
+
+# Avvia caricamento Drive e thread di aggiornamento
+print("Caricamento istruzioni da Google Drive...")
+carica_istruzioni_drive()
+t = threading.Thread(target=aggiorna_drive_loop, daemon=True)
+t.start()
 
 SINONIMI = {
     "teglia":         ["teglie","stampo","stampi","placca","placche","formina"],
@@ -69,14 +203,13 @@ SINONIMI = {
     "forno":          ["forni","cottura","infornare","cuocere"],
     "arrotondatrice": ["arrotondatrici","ballmatic","arrotondare","formatura"],
     "ballmatic":      ["arrotondatrice","arrotondatrici","formatura palle"],
-    "impastatrice":   ["impastatrici","impasto","impastatrice","spirale"],
+    "impastatrice":   ["impastatrici","impasto","spirale"],
     "sfogliatrice":   ["sfogliatrici","sfoglia","laminatoio","stendi"],
     "sottovuoto":     ["confezionamento","conservazione","termosaldatura"],
     "lievitazione":   ["lievitare","lievito","fermalievitazione","cella","fermabiga"],
     "fermalievitazione": ["cella","lievitazione","fermabiga","armadio lievitazione"],
     "stagionatura":   ["maturazione","stagionare","celle stagionatura"],
     "abbattitore":    ["abbattimento","raffreddamento rapido","shock termico"],
-    "impastatrice":   ["impastatrici","spirale","forcella","bracci tuffanti"],
     "spezzatrice":    ["spezza","porzionatura","divisore"],
     "formatrice":     ["formare","formatura","cilindro"],
     "60x40":          ["60 x 40","600x400","60x40 cm","teglia standard"],
@@ -123,7 +256,6 @@ def cerca_prodotti_candidati(query, limit=12):
     scores.sort(key=lambda x: x[0], reverse=True)
     return [p for _, p in scores[:limit]]
 
-
 def filtra_con_claude(query, candidati, limit=4):
     if not candidati:
         return []
@@ -160,7 +292,6 @@ def filtra_con_claude(query, candidati, limit=4):
     except Exception as e:
         print(f"Errore filtro Claude: {e}")
         return candidati[:limit]
-
 
 def cerca_prodotti(query, limit=4):
     candidati = cerca_prodotti_candidati(query, limit=12)
@@ -199,6 +330,7 @@ header { background: #c0392b; padding: 14px 20px; display: flex; justify-content
 .tag { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 0.72rem; }
 .td { background: #eafaea; color: #3a8a3a; }
 .te { background: #eaf0fa; color: #3a5aaa; }
+.tg { background: #fff3cd; color: #856404; }
 .prow { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
 .pcard { background: #fff5f5; border: 1px solid #f0c0c0; border-radius: 8px; padding: 8px 13px; font-size: 0.85rem; text-decoration: none; color: #c0392b; display: inline-block; transition: all 0.2s; }
 .pcard:hover { background: #c0392b; color: white; border-color: #c0392b; }
@@ -231,7 +363,7 @@ header { background: #c0392b; padding: 14px 20px; display: flex; justify-content
 <script>
 var cid = Math.random().toString(36).slice(2);
 
-function buildBubble(text, sources, emails, products) {
+function buildBubble(text, sources, emails, products, drive) {
   var escaped = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   escaped = escaped.replace(/(https?:\/\/\S+)/g, '<a href="$1" target="_blank" style="color:#c0392b;font-weight:600;text-decoration:underline;">&#128279; Apri link</a>');
   var src = '<div class="src">';
@@ -239,7 +371,7 @@ function buildBubble(text, sources, emails, products) {
     for (var i = 0; i < sources.length; i++) src += '<span class="tag td">' + sources[i] + '</span>';
   }
   if (emails > 0) src += '<span class="tag te">' + emails + ' email</span>';
-  // nessuna fonte rimossa — non mostrare nulla se non ci sono fonti
+  if (drive) src += '<span class="tag tg">&#128194; Drive</span>';
   src += '</div>';
   var phtml = '';
   if (products && products.length > 0) {
@@ -252,7 +384,7 @@ function buildBubble(text, sources, emails, products) {
   return escaped + src + phtml;
 }
 
-function addMsg(text, role, sources, emails, products) {
+function addMsg(text, role, sources, emails, products, drive) {
   var chat = document.getElementById('chat');
   var row = document.createElement('div');
   row.className = role === 'u' ? 'row user' : 'row';
@@ -262,7 +394,7 @@ function addMsg(text, role, sources, emails, products) {
   var bub = document.createElement('div');
   bub.className = 'bub ' + role;
   if (role === 's') {
-    bub.innerHTML = buildBubble(text, sources, emails, products);
+    bub.innerHTML = buildBubble(text, sources, emails, products, drive);
   } else {
     bub.textContent = text;
   }
@@ -320,8 +452,8 @@ function send() {
   if (!text) return;
   inp.value = '';
   sbtn.disabled = true;
-  addMsg(text, 'u', [], 0, []);
-  var loading = addMsg('...', 's', [], 0, []);
+  addMsg(text, 'u', [], 0, [], false);
+  var loading = addMsg('...', 's', [], 0, [], false);
   loading.classList.add('loading');
   fetch('/chat', {
     method: 'POST',
@@ -331,7 +463,7 @@ function send() {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     loading.classList.remove('loading');
-    loading.innerHTML = buildBubble(data.response, data.doc_sources, data.email_count, data.products);
+    loading.innerHTML = buildBubble(data.response, data.doc_sources, data.email_count, data.products, data.drive_used);
     document.getElementById('chat').scrollTop = 99999;
   })
   .catch(function() {
@@ -451,7 +583,7 @@ def chat():
     cid     = data.get("cid", "default")
 
     if not message:
-        return jsonify({"response": "...", "doc_sources": [], "email_count": 0, "products": []})
+        return jsonify({"response": "...", "doc_sources": [], "email_count": 0, "products": [], "drive_used": False})
 
     if cid not in histories:
         histories[cid] = []
@@ -463,6 +595,11 @@ def chat():
     docs     = get_docs(q)
     emails   = get_emails(q)
     products = cerca_prodotti(q, limit=4)
+
+    # Leggi istruzioni da Drive (thread-safe)
+    with DRIVE_LOCK:
+        drive_ctx = DRIVE_ISTRUZIONI
+    drive_used = bool(drive_ctx.strip())
 
     # Recupera correzioni simili salvate dal titolare (autoapprendimento)
     correzioni_ctx = ""
@@ -476,12 +613,10 @@ def chat():
                 creato_il TIMESTAMP DEFAULT NOW()
             )
         """)
-        # Ricerca semantica con embeddings OpenAI
         rows_c = []
         msg_embedding = get_embedding(message) if OPENAI_API_KEY else None
 
         if msg_embedding:
-            # Prendi tutte le correzioni con embedding (se disponibile)
             cur_c.execute("""
                 SELECT domanda_cliente, risposta_corretta, embedding
                 FROM correzioni
@@ -500,14 +635,12 @@ def chat():
                         except:
                             pass
                     else:
-                        # Correzioni senza embedding: usa keyword fallback
                         if any(w.lower() in (dom or '').lower() for w in message.split() if len(w) > 2):
                             scored.append((0.5, dom, risp))
 
                 scored.sort(reverse=True)
                 rows_c = [(dom, risp) for score, dom, risp in scored[:3] if score > 0.3]
 
-        # Fallback keyword se no OpenAI o nessun risultato semantico
         if not rows_c:
             words_c = [w.lower() for w in message.split() if len(w) > 2][:8]
             if words_c:
@@ -558,6 +691,11 @@ def chat():
             "NON menzionare mai il nome del produttore o brand costruttore."
         )
 
+    # Istruzioni da Google Drive
+    drive_section = ""
+    if drive_ctx.strip():
+        drive_section = f"\n\n=== ISTRUZIONI AGGIORNATE DAL TEAM (Google Drive) ===\n{drive_ctx[:3000]}\n"
+
     if docs:
         note = "Hai documentazione tecnica - usala con precisione."
     elif emails:
@@ -578,7 +716,7 @@ def chat():
         lang_hint = "KRITISCHE REGEL: Der Kunde schreibt auf Deutsch. Du MUSST auf DEUTSCH antworten.\n\n"
 
     system = (
-
+        lang_hint +
         "Sei Sophie, assistente virtuale professionale di Starpizza.\n\n"
         "ESEMPI DI RISPOSTE IDEALI (segui questo stile esatto):\n"
         "---\n"
@@ -596,7 +734,7 @@ def chat():
         "- NON citare mai il brand del produttore.\n"
         "- LINK: usa SOLO i link dalla sezione PRODOTTI STARPIZZA TROVATI qui sotto. NON inventare mai link. Se non trovi il prodotto nei PRODOTTI TROVATI, manda il cliente su starpizza.org/negozio senza inventare URL.\n"
         "- EMAIL: chiedi solo per preventivi, resi o assistenza.\n"
-        + docs_ctx + email_ctx + products_ctx + correzioni_ctx
+        + drive_section + docs_ctx + email_ctx + products_ctx + correzioni_ctx
     )
     history.append({"role": "user", "content": message})
 
@@ -612,18 +750,18 @@ def chat():
         history.append({"role": "assistant", "content": response})
         if len(history) > 40:
             histories[cid] = history[-40:]
-        # Salva conversazione nel DB
         salva_chat(cid, "cliente", message)
         salva_chat(cid, "sophie", response)
         return jsonify({
             "response":    response,
             "doc_sources": doc_sources,
             "email_count": len(emails),
-            "products":    products
+            "products":    products,
+            "drive_used":  drive_used
         })
     except Exception as e:
         history.pop()
-        return jsonify({"response": f"Errore: {str(e)}", "doc_sources": [], "email_count": 0, "products": []})
+        return jsonify({"response": f"Errore: {str(e)}", "doc_sources": [], "email_count": 0, "products": [], "drive_used": False})
 
 
 @app.route("/admin/chat")
@@ -659,6 +797,10 @@ def admin_chat():
             sessioni[sid] = []
         sessioni[sid].append((mid, ruolo, testo, ts))
 
+    # Stato Drive
+    with DRIVE_LOCK:
+        drive_chars = len(DRIVE_ISTRUZIONI)
+
     html = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sophie Admin</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -670,6 +812,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
 .stat { background: white; border-radius: 10px; padding: 14px 20px; flex: 1; box-shadow: 0 2px 6px rgba(0,0,0,0.07); }
 .stat h3 { font-size: 1.6rem; color: #c0392b; }
 .stat p { font-size: 0.8rem; color: #888; margin-top: 4px; }
+.stat.drive h3 { color: #856404; }
 .sessione { background: white; border-radius: 12px; padding: 18px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
 .sess-header { font-size: 0.8rem; color: #aaa; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
 .wrap { display: flex; flex-direction: column; gap: 8px; }
@@ -689,6 +832,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
 <div class="stat"><h3>""" + str(len(sessioni)) + """</h3><p>Conversazioni</p></div>
 <div class="stat"><h3>""" + str(sum(len(v) for v in sessioni.values())) + """</h3><p>Messaggi</p></div>
 <div class="stat"><h3>""" + str(n_correzioni) + """</h3><p>Correzioni</p></div>
+<div class="stat drive"><h3>""" + str(drive_chars) + """</h3><p>&#128194; Caratteri da Drive</p></div>
 </div>
 """
     for sid, messaggi in sessioni.items():
@@ -763,7 +907,6 @@ def admin_correggi():
                 embedding TEXT
             )
         """)
-        # Calcola embedding automaticamente
         emb_json = None
         if OPENAI_API_KEY and domanda:
             try:
