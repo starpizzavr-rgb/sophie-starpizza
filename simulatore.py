@@ -386,11 +386,16 @@ def filtra_con_claude(query, candidati, limit=4):
         f"Un cliente ha chiesto: \"{query}\"\n\n"
         f"Prodotti nel catalogo Starpizza (attrezzature professionali):\n"
         f"{lista}\n"
-        f"Seleziona SOLO i numeri dei prodotti davvero pertinenti. "
+        f"Seleziona SOLO i numeri dei prodotti STRETTAMENTE pertinenti alla richiesta del cliente. "
         f"Massimo {limit}. "
-        f"Escludi prodotti per uso domestico se la richiesta e professionale. "
-        f"Escludi prodotti che contengono la parola cercata ma non sono quello che cerca. "
-        f"Rispondi SOLO con numeri separati da virgola, esempio: 1,3"
+        f"REGOLE DI ESCLUSIONE RIGIDE:\n"
+        f"- Escludi qualsiasi prodotto di categoria diversa da quella richiesta. "
+        f"Esempio: se il cliente chiede teglie o stampi, escludi arrotondatrici, impastatrici, forni e qualsiasi macchinario. "
+        f"Esempio: se il cliente chiede arrotondatrici, escludi teglie, stampi, carrelli. "
+        f"Esempio: se il cliente chiede forni, escludi teglie e macchinari. "
+        f"- Escludi prodotti che contengono casualmente una parola della query ma appartengono a una categoria diversa. "
+        f"- Se nessun prodotto e davvero pertinente, rispondi con: nessuno\n"
+        f"Rispondi SOLO con numeri separati da virgola (es: 1,3) oppure con la parola: nessuno"
     )
     try:
         msg = client.messages.create(
@@ -399,7 +404,9 @@ def filtra_con_claude(query, candidati, limit=4):
             temperature=0,
             messages=[{"role": "user", "content": prompt}]
         )
-        risposta = msg.content[0].text.strip()
+        risposta = msg.content[0].text.strip().lower()
+        if "nessuno" in risposta:
+            return []
         numeri = [int(x.strip()) - 1 for x in risposta.split(",") if x.strip().isdigit()]
         selezionati = [candidati[n] for n in numeri if 0 <= n < len(candidati)]
         return selezionati[:limit]
