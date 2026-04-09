@@ -42,37 +42,58 @@ TRACKING_STATUS_MAP = {
 
 def spediamopro_get_token():
     """
-    Ottiene o rinnova il token Bearer di SpediamoP ro.
-    Autenticazione: HTTP Basic Auth con email e authcode come password.
+    Ottiene il token per SpediamoP ro.
+    Strategia 1: usa SPEDIAMOPRO_AUTHCODE direttamente come Bearer token.
+    Strategia 2: se fallisce, tenta Basic Auth con username:authcode.
     """
     global _spediamopro_token, _spediamopro_token_expiry
-    if not SPEDIAMOPRO_USERNAME or not SPEDIAMOPRO_AUTHCODE:
+    if not SPEDIAMOPRO_AUTHCODE:
         return None
     if _spediamopro_token and time.time() < _spediamopro_token_expiry - 60:
         return _spediamopro_token
     try:
         import urllib.request, urllib.parse, base64
-        credenziali = base64.b64encode(
-            f"{SPEDIAMOPRO_USERNAME}:{SPEDIAMOPRO_AUTHCODE}".encode("utf-8")
-        ).decode("utf-8")
-        data = urllib.parse.urlencode({
-            "grant_type": "client_credentials",
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            f"{SPEDIAMOPRO_BASE_URL}/auth/token",
-            data=data,
-            headers={
-                "Content-Type":  "application/x-www-form-urlencoded",
-                "Authorization": f"Basic {credenziali}"
-            }
+
+        # Strategia 1: Authcode diretto come Bearer token (modalità più comune)
+        # Verifica con una chiamata test al wallet endpoint
+        test_req = urllib.request.Request(
+            f"{SPEDIAMOPRO_BASE_URL}/wallet",
+            headers={"Authorization": f"Bearer {SPEDIAMOPRO_AUTHCODE}"}
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result                    = json.loads(resp.read())
-            _spediamopro_token        = result.get("access_token")
-            expires_in                = result.get("expires_in", 3600)
-            _spediamopro_token_expiry = time.time() + expires_in
-            print(f"SpediamoP ro token ottenuto, scade in {expires_in}s")
-            return _spediamopro_token
+        try:
+            with urllib.request.urlopen(test_req, timeout=10) as resp:
+                if resp.status == 200:
+                    _spediamopro_token        = SPEDIAMOPRO_AUTHCODE
+                    _spediamopro_token_expiry = time.time() + 86400  # 24h
+                    print("SpediamoP ro: authcode usato direttamente come Bearer token")
+                    return _spediamopro_token
+        except Exception:
+            pass
+
+        # Strategia 2: Basic Auth username:authcode -> ottieni access_token
+        if SPEDIAMOPRO_USERNAME:
+            credenziali = base64.b64encode(
+                f"{SPEDIAMOPRO_USERNAME}:{SPEDIAMOPRO_AUTHCODE}".encode("utf-8")
+            ).decode("utf-8")
+            data = urllib.parse.urlencode({
+                "grant_type": "client_credentials",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{SPEDIAMOPRO_BASE_URL}/auth/token",
+                data=data,
+                headers={
+                    "Content-Type":  "application/x-www-form-urlencoded",
+                    "Authorization": f"Basic {credenziali}"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result                    = json.loads(resp.read())
+                _spediamopro_token        = result.get("access_token")
+                expires_in                = result.get("expires_in", 3600)
+                _spediamopro_token_expiry = time.time() + expires_in
+                print(f"SpediamoP ro token via Basic Auth, scade in {expires_in}s")
+                return _spediamopro_token
+
     except Exception as e:
         print(f"SpediamoP ro auth error: {e}")
         return None
