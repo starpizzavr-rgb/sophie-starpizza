@@ -72,8 +72,9 @@ def spediamopro_get_token():
 
         # Strategia 2: Basic Auth username:authcode -> ottieni access_token
         if SPEDIAMOPRO_USERNAME:
+            # Authcode come USERNAME, password VUOTA (doc SpediamoP ro)
             credenziali = base64.b64encode(
-                f"{SPEDIAMOPRO_USERNAME}:{SPEDIAMOPRO_AUTHCODE}".encode("utf-8")
+                f"{SPEDIAMOPRO_AUTHCODE}:".encode("utf-8")
             ).decode("utf-8")
             data = urllib.parse.urlencode({
                 "grant_type": "client_credentials",
