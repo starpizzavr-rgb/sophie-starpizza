@@ -1046,3 +1046,44 @@ def admin_correggi():
     except Exception as e:
         print(f"Errore correzione: {e}")
         return jsonify({"ok": False, "errore": str(e)})
+
+
+@app.route("/admin/drive")
+def admin_drive():
+    """Pagina di debug per vedere i file Drive indicizzati."""
+    with DRIVE_LOCK:
+        indice = list(DRIVE_INDEX)
+
+    cartelle = {}
+    for entry in indice:
+        c = entry["cartella"]
+        if c not in cartelle:
+            cartelle[c] = []
+        cartelle[c].append(entry["nome"])
+
+    html = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Drive Index</title>
+<style>
+body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; padding: 24px; }
+h1 { color: #c0392b; margin-bottom: 20px; }
+.cartella { background: white; border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.07); }
+.cartella h3 { color: #856404; margin-bottom: 10px; font-size: 1rem; }
+.file { font-size: 0.9rem; color: #444; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+.file:last-child { border: none; }
+.stats { background: #c0392b; color: white; border-radius: 10px; padding: 14px 20px; margin-bottom: 20px; }
+a { color: #c0392b; }
+</style></head><body>
+<h1>📁 File Drive Indicizzati</h1>"""
+
+    html += f'<div class="stats">Totale: <strong>{len(indice)} file</strong> in <strong>{len(cartelle)} cartelle</strong> — <a href="/admin/drive" style="color:white;">🔄 Aggiorna</a> | <a href="/admin/chat" style="color:white;">← Pannello</a></div>'
+
+    if not cartelle:
+        html += '<p>Nessun file trovato. Controlla le variabili Google su Railway.</p>'
+    else:
+        for nome_cartella, files in sorted(cartelle.items()):
+            html += f'<div class="cartella"><h3>📂 {nome_cartella} ({len(files)} file)</h3>'
+            for f in files:
+                html += f'<div class="file">📄 {f}</div>'
+            html += '</div>'
+
+    html += '</body></html>'
+    return html
