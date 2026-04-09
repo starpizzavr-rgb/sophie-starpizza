@@ -100,14 +100,51 @@ def spediamopro_get_token():
 
 def spediamopro_cerca_spedizione(query_str):
     """
-    Cerca una spedizione per codice ordine, email o nome cliente.
-    Restituisce la prima spedizione trovata o None.
+    Cerca una spedizione provando in sequenza:
+    1. Direttamente per ID numerico -> GET /shipments/{id}
+    2. Per codice alfanumerico -> GET /shipments/by-code/{code}
+    3. Ricerca testuale -> POST /shipments/search
     """
     token = spediamopro_get_token()
     if not token:
         return None
+
+    import urllib.request
+
+    # Strategia 1: ID numerico puro
+    query_clean = query_str.strip()
+    if query_clean.isdigit():
+        try:
+            req = urllib.request.Request(
+                f"{SPEDIAMOPRO_BASE_URL}/shipments/{query_clean}",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+                data = result.get("data")
+                if data:
+                    print(f"SpediamoP ro: trovata per ID {query_clean}")
+                    return data
+        except Exception as e:
+            print(f"SpediamoP ro by-id error: {e}")
+
+    # Strategia 2: codice alfanumerico
     try:
-        import urllib.request
+        req = urllib.request.Request(
+            f"{SPEDIAMOPRO_BASE_URL}/shipments/by-code/{query_clean}",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            data = result.get("data")
+            if data:
+                print(f"SpediamoP ro: trovata per codice {query_clean}")
+                return data
+    except Exception as e:
+        print(f"SpediamoP ro by-code error: {e}")
+
+    # Strategia 3: ricerca testuale (email, nome, telefono)
+    try:
         body = json.dumps({"search": query_str}).encode("utf-8")
         req  = urllib.request.Request(
             f"{SPEDIAMOPRO_BASE_URL}/shipments/search",
@@ -121,7 +158,9 @@ def spediamopro_cerca_spedizione(query_str):
             result = json.loads(resp.read())
             items  = result.get("data", [])
             if items:
-                return items[0]  # prima spedizione trovata
+                print(f"SpediamoP ro: trovata per ricerca testuale '{query_str}'")
+                return items[0]
+            print(f"SpediamoP ro: nessun risultato per '{query_str}'")
             return None
     except Exception as e:
         print(f"SpediamoP ro search error: {e}")
