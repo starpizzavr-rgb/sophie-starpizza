@@ -902,6 +902,17 @@ def chat():
     msg_lower_track = message.lower()
     is_tracking_request = any(kw in msg_lower_track for kw in TRACKING_KEYWORDS)
 
+    # Memoria contesto: se Sophie ha già chiesto info tracking nella sessione,
+    # tratta anche la risposta successiva come richiesta tracking
+    if not is_tracking_request and history:
+        ultimi_sophie = [m["content"] for m in history if m["role"] == "assistant"][-2:]
+        testo_sophie = " ".join(ultimi_sophie).lower()
+        TRACKING_FOLLOWUP = ["numero d'ordine", "indirizzo email", "numero di telefono",
+                             "order number", "email address", "phone number",
+                             "numéro de commande", "número de pedido"]
+        if any(kw in testo_sophie for kw in TRACKING_FOLLOWUP):
+            is_tracking_request = True  # il cliente sta rispondendo alla domanda di Sophie
+
     if is_tracking_request:
         # Estrai possibile codice ordine / email / nome dal messaggio
         # Cerca prima nella sessione storica se il cliente ha già dato info
