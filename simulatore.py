@@ -822,17 +822,55 @@ def chat():
     else:
         note = "Non hai info specifiche nel database. Dillo con naturalezza e suggerisci di contattare Starpizza."
 
-    # Rileva lingua del messaggio
-    msg_lower = message.lower()
+    # Rileva lingua dal header Accept-Language (geolocalizzazione browser)
     lang_hint = ""
+    detected_lang = "it"  # default italiano
+
+    accept_lang = request.headers.get("Accept-Language", "").lower()
+    msg_lower = message.lower()
+
+    # Priorità 1: header browser (più affidabile)
+    if accept_lang:
+        if accept_lang.startswith("en"):
+            detected_lang = "en"
+        elif accept_lang.startswith("fr"):
+            detected_lang = "fr"
+        elif accept_lang.startswith("es"):
+            detected_lang = "es"
+        elif accept_lang.startswith("de"):
+            detected_lang = "de"
+        elif accept_lang.startswith("pl"):
+            detected_lang = "pl"
+        elif accept_lang.startswith("ar"):
+            detected_lang = "ar"
+        elif accept_lang.startswith("sr"):
+            detected_lang = "sr"
+
+    # Priorità 2: parole chiave nel messaggio (override se diverso dal browser)
     if any(w in msg_lower for w in ["the ","is ","are ","have","what","where","how ","can ","i ","we ","my ","your "]):
-        lang_hint = "CRITICAL RULE: The customer is writing in ENGLISH. You MUST reply in ENGLISH only. Never use Italian.\n\n"
+        detected_lang = "en"
     elif any(w in msg_lower for w in ["bonjour","merci","vous ","je ","est ","les ","des ","que ","pour "]):
-        lang_hint = "REGLE CRITIQUE: Le client ecrit en francais. Tu DOIS repondre en FRANCAIS uniquement.\n\n"
+        detected_lang = "fr"
     elif any(w in msg_lower for w in ["hola","gracias","tiene","como ","por favor","para ","esto "]):
-        lang_hint = "REGLA CRITICA: El cliente escribe en espanol. DEBES responder en ESPANOL unicamente.\n\n"
+        detected_lang = "es"
     elif any(w in msg_lower for w in ["danke","bitte","haben","ich ","sie ","die ","der ","das "]):
-        lang_hint = "KRITISCHE REGEL: Der Kunde schreibt auf Deutsch. Du MUSST auf DEUTSCH antworten.\n\n"
+        detected_lang = "de"
+
+    lang_map = {
+        "en": "CRITICAL RULE: The customer is writing in ENGLISH. You MUST reply in ENGLISH only. Never use Italian.\n\n",
+        "fr": "REGLE CRITIQUE: Le client ecrit en francais. Tu DOIS repondre en FRANCAIS uniquement.\n\n",
+        "es": "REGLA CRITICA: El cliente escribe en espanol. DEBES responder en ESPANOL unicamente.\n\n",
+        "de": "KRITISCHE REGEL: Der Kunde schreibt auf Deutsch. Du MUSST auf DEUTSCH antworten.\n\n",
+        "pl": "KRYTYCZNA ZASADA: Klient pisze po polsku. MUSISZ odpowiadac po POLSKU.\n\n",
+        "ar": "قاعدة حاسمة: العميل يكتب بالعربية. يجب أن ترد بالعربية فقط.\n\n",
+        "sr": "KRITIČNO PRAVILO: Klijent piše na srpskom. MORATE odgovoriti na SRPSKOM.\n\n",
+    }
+    lang_hint = lang_map.get(detected_lang, "")
+
+    # Traduzione automatica correzioni nella lingua del cliente
+    auto_translate_note = ""
+    if detected_lang != "it" and correzioni_ctx:
+        auto_translate_note = f"\nIMPORTANTE: Le correzioni del team qui sopra sono in italiano. Traducile automaticamente in {detected_lang.upper()} prima di usarle nella risposta. Non rispondere mai in italiano se il cliente usa un'altra lingua.\n"
 
     system = (
         lang_hint +
@@ -853,6 +891,8 @@ def chat():
         "- NON citare mai il brand del produttore.\n"
         "- LINK: usa SOLO i link dalla sezione PRODOTTI STARPIZZA TROVATI qui sotto. NON inventare mai link. Se non trovi il prodotto nei PRODOTTI TROVATI, manda il cliente su starpizza.org/negozio senza inventare URL.\n"
         "- EMAIL: chiedi solo per preventivi, resi o assistenza.\n"
+        "- DATI DI CONTATTO: NON inventare MAI numeri di telefono, indirizzi email, URL, indirizzi fisici o qualsiasi dato di contatto che non sia esplicitamente presente nelle istruzioni o nella documentazione fornita. Se un cliente chiede un contatto che non hai, rispondi ESATTAMENTE: 'Per questa informazione ti invito a visitare starpizza.org o a scriverci tramite il sito.' Non improvvisare mai.\n"
+        + auto_translate_note
         + drive_section + docs_ctx + email_ctx + products_ctx + correzioni_ctx
     )
     history.append({"role": "user", "content": message})
