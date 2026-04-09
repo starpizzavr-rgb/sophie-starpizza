@@ -15,6 +15,157 @@ ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # ============================================================
+# SPEDIAMOPRO — Tracking spedizioni
+# ============================================================
+
+SPEDIAMOPRO_USERNAME  = os.getenv("SPEDIAMOPRO_USERNAME")   # email account SpediamoP ro
+SPEDIAMOPRO_AUTHCODE  = os.getenv("SPEDIAMOPRO_AUTHCODE")   # authcode dal pannello Integrazioni
+SPEDIAMOPRO_BASE_URL  = "https://core.spediamopro.com/api/v2"
+
+# Cache token per evitare troppe chiamate auth
+_spediamopro_token        = None
+_spediamopro_token_expiry = 0
+
+TRACKING_STATUS_MAP = {
+    0:  "annullata",
+    4:  "pagata e in attesa di elaborazione",
+    5:  "elaborata — etichetta creata",
+    6:  "ritiro richiesto",
+    7:  "avviata — primo evento corriere",
+    8:  "in transito",
+    9:  "in consegna oggi",
+    10: "consegnata ✅",
+    11: "in eccezione (ritardo, mancata consegna o giacenza) — contattaci",
+    12: "consegnata al punto di ritiro",
+    13: "in attesa di elaborazione",
+}
+
+def spediamopro_get_token():
+    """
+    Ottiene o rinnova il token Bearer di SpediamoP ro.
+    Autenticazione: HTTP Basic Auth con email e authcode come password.
+    """
+    global _spediamopro_token, _spediamopro_token_expiry
+    if not SPEDIAMOPRO_USERNAME or not SPEDIAMOPRO_AUTHCODE:
+        return None
+    if _spediamopro_token and time.time() < _spediamopro_token_expiry - 60:
+        return _spediamopro_token
+    try:
+        import urllib.request, urllib.parse, base64
+        credenziali = base64.b64encode(
+            f"{SPEDIAMOPRO_USERNAME}:{SPEDIAMOPRO_AUTHCODE}".encode("utf-8")
+        ).decode("utf-8")
+        data = urllib.parse.urlencode({
+            "grant_type": "client_credentials",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{SPEDIAMOPRO_BASE_URL}/auth/token",
+            data=data,
+            headers={
+                "Content-Type":  "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {credenziali}"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result                    = json.loads(resp.read())
+            _spediamopro_token        = result.get("access_token")
+            expires_in                = result.get("expires_in", 3600)
+            _spediamopro_token_expiry = time.time() + expires_in
+            print(f"SpediamoP ro token ottenuto, scade in {expires_in}s")
+            return _spediamopro_token
+    except Exception as e:
+        print(f"SpediamoP ro auth error: {e}")
+        return None
+
+def spediamopro_cerca_spedizione(query_str):
+    """
+    Cerca una spedizione per codice ordine, email o nome cliente.
+    Restituisce la prima spedizione trovata o None.
+    """
+    token = spediamopro_get_token()
+    if not token:
+        return None
+    try:
+        import urllib.request
+        body = json.dumps({"search": query_str}).encode("utf-8")
+        req  = urllib.request.Request(
+            f"{SPEDIAMOPRO_BASE_URL}/shipments/search",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            items  = result.get("data", [])
+            if items:
+                return items[0]  # prima spedizione trovata
+            return None
+    except Exception as e:
+        print(f"SpediamoP ro search error: {e}")
+        return None
+
+def spediamopro_get_tracking(shipment_id):
+    """Recupera il tracking dettagliato per ID spedizione."""
+    token = spediamopro_get_token()
+    if not token:
+        return None
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"{SPEDIAMOPRO_BASE_URL}/shipments/{shipment_id}/tracking",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            return result.get("data")
+    except Exception as e:
+        print(f"SpediamoP ro tracking error: {e}")
+        return None
+
+def spediamopro_tracking_testo(query_str):
+    """
+    Funzione principale: cerca la spedizione e restituisce
+    un testo pronto per Sophie con lo stato aggiornato.
+    """
+    spedizione = spediamopro_cerca_spedizione(query_str)
+    if not spedizione:
+        return None
+
+    shipment_id   = spedizione.get("id")
+    shipment_code = spedizione.get("code", "")
+
+    tracking = spediamopro_get_tracking(shipment_id)
+    if not tracking:
+        return None
+
+    status_code  = tracking.get("status", -1)
+    status_label = TRACKING_STATUS_MAP.get(status_code, f"stato {status_code}")
+    tracking_url = tracking.get("url", "")
+    delivery_date= tracking.get("expectedDeliveryDate", "")
+    corriere     = tracking.get("courier", "")
+    tracking_code= tracking.get("trackingCode", "")
+
+    # Ultimo evento
+    events       = tracking.get("events", [])
+    ultimo_evento= ""
+    if events:
+        ev           = events[-1]
+        ultimo_evento= ev.get("description", "")
+
+    testo = f"[TRACKING SPEDIZIONE]\n"
+    testo += f"Codice spedizione: {shipment_code}\n"
+    testo += f"Stato: {status_label}\n"
+    if corriere:        testo += f"Corriere: {corriere}\n"
+    if tracking_code:   testo += f"Codice tracking: {tracking_code}\n"
+    if delivery_date:   testo += f"Data prevista consegna: {delivery_date}\n"
+    if ultimo_evento:   testo += f"Ultimo aggiornamento: {ultimo_evento}\n"
+    if tracking_url:    testo += f"Link tracking: {tracking_url}\n"
+
+    return testo
+
+# ============================================================
 # GOOGLE DRIVE — indice cartelle + lettura PDF on-demand
 # ============================================================
 
@@ -717,6 +868,44 @@ def chat():
     emails   = get_emails(q)
     products = cerca_prodotti(q, limit=4)
 
+    # ── TRACKING SPEDIZIONE ──────────────────────────────────
+    tracking_ctx = ""
+    TRACKING_KEYWORDS = [
+        "ordine", "spedizione", "tracking", "dove", "pacco", "consegna",
+        "spedito", "arriva", "corriere", "tracciare", "stato ordine",
+        "order", "shipment", "delivery", "where is", "track",
+        "commande", "livraison", "suivi",
+        "pedido", "envío", "entrega",
+        "bestellung", "lieferung", "sendung",
+    ]
+    msg_lower_track = message.lower()
+    is_tracking_request = any(kw in msg_lower_track for kw in TRACKING_KEYWORDS)
+
+    if is_tracking_request:
+        # Estrai possibile codice ordine / email / nome dal messaggio
+        # Cerca prima nella sessione storica se il cliente ha già dato info
+        history_testo = " ".join(
+            m["content"] for m in history if m["role"] == "user"
+        )
+        search_query = message  # usa il messaggio corrente come query
+
+        # Se il messaggio contiene email, usala come query principale
+        email_match = re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', message + " " + history_testo)
+        if email_match:
+            search_query = email_match.group(0)
+
+        tracking_info = spediamopro_tracking_testo(search_query)
+        if tracking_info:
+            tracking_ctx = f"\n\n=== TRACKING SPEDIZIONE (dati in tempo reale) ===\n{tracking_info}\nUsa queste informazioni per rispondere al cliente. Fornisci il link tracking se presente.\n"
+        else:
+            # Sophie chiede il codice ordine o email
+            tracking_ctx = (
+                "\n\n=== TRACKING SPEDIZIONE ===\n"
+                "Il cliente chiede informazioni sulla spedizione ma non ho trovato dati con le informazioni disponibili. "
+                "Chiedi gentilmente il numero d'ordine o l'indirizzo email usato per l'acquisto per poter verificare.\n"
+            )
+    # ── FINE TRACKING ────────────────────────────────────────
+
     # Cerca nei PDF Drive pertinenti alla domanda
     drive_ctx, drive_used = cerca_in_drive(q)
 
@@ -893,7 +1082,7 @@ def chat():
         "- EMAIL: chiedi solo per preventivi, resi o assistenza.\n"
         "- DATI DI CONTATTO: NON inventare MAI numeri di telefono, indirizzi email, URL, indirizzi fisici o qualsiasi dato di contatto che non sia esplicitamente presente nelle istruzioni o nella documentazione fornita. Se un cliente chiede un contatto che non hai, rispondi ESATTAMENTE: 'Per questa informazione ti invito a visitare starpizza.org o a scriverci tramite il sito.' Non improvvisare mai.\n"
         + auto_translate_note
-        + drive_section + docs_ctx + email_ctx + products_ctx + correzioni_ctx
+        + drive_section + tracking_ctx + docs_ctx + email_ctx + products_ctx + correzioni_ctx
     )
     history.append({"role": "user", "content": message})
 
