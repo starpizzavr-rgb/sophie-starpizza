@@ -932,12 +932,64 @@ def chat():
     # ── TRACKING SPEDIZIONE ──────────────────────────────────
     tracking_ctx = ""
     TRACKING_KEYWORDS = [
-        "ordine", "spedizione", "tracking", "dove", "pacco", "consegna",
-        "spedito", "arriva", "corriere", "tracciare", "stato ordine",
-        "order", "shipment", "delivery", "where is", "track",
-        "commande", "livraison", "suivi",
-        "pedido", "envío", "entrega",
-        "bestellung", "lieferung", "sendung",
+        # Italiano — domande dirette sullo stato
+        "spedito", "spedita", "spediti", "spedite",
+        "è stato spedito", "è stata spedita", "sono stati spediti", "sono state spedite",
+        "è partito", "è partita", "sono partiti", "sono partite",
+        "è uscito", "è uscita", "sono usciti", "sono uscite",
+        "ha spedito", "avete spedito", "l'avete mandato", "l'avete mandato",
+        "quando spedite", "quando mandate", "quando parte",
+        # Arrivo e consegna
+        "quando arriva", "quando arriverà", "quando lo ricevo",
+        "arrivato", "arrivata", "arrivati", "arrivate",
+        "non è arrivato", "non è arrivata", "non sono arrivati", "non sono arrivate",
+        "non ho ricevuto", "non ho ancora ricevuto", "aspetto ancora",
+        "in ritardo", "ritardo", "doveva arrivare", "doveva venire",
+        # Dove è
+        "dov'è", "dove è", "dove sono", "dove si trova",
+        "dov'è il mio", "dove sono i miei", "dove sono le mie",
+        "dov'è la mia", "dov'è il pacco", "dov'è il corriere",
+        # Termini generici spedizione
+        "pacco", "pacchi", "paccone", "collo", "colli",
+        "spedizione", "spedizioni", "consegna", "consegnato", "consegnata",
+        "tracking", "tracciamento", "tracciare", "traccia",
+        "codice tracking", "codice tracciamento", "codice spedizione",
+        "numero spedizione", "numero tracking", "numero pacco",
+        "numero corriere", "codice corriere", "link tracking",
+        # Prodotti specifici Starpizza
+        "teglie", "teglia", "carrelli", "carrello", "attrezzi", "attrezzo",
+        "macchina", "macchinari", "arrotondatrice", "arrotondatrici",
+        "impastatrice", "impastatrici", "sfogliatrice", "stampi", "stampo",
+        "roba", "materiale", "materiali", "attrezzatura", "attrezzature",
+        "acquisto", "acquisti", "ordine", "ordini", "cosa ho ordinato",
+        # Corrieri
+        "corriere", "brt", "gls", "dhl", "sda", "poste", "bartolini",
+        "ups", "fedex", "nexive", "fercam", "tnt",
+        # Stato spedizione
+        "in transito", "fermo", "bloccato", "giacenza", "giacente",
+        "tentativo di consegna", "assente", "non trovato",
+        # Dialettale / informale italiano
+        "l'avete mandato", "l'avete spedito", "me lo mandate",
+        "me lo spedite", "quando me lo portano", "quando passa il corriere",
+        "il corriere è passato", "è passato il corriere",
+        # Inglese
+        "track", "tracking", "shipment", "shipped", "delivery", "deliver",
+        "where is", "where are", "has it shipped", "order status",
+        "package", "parcel", "dispatch", "dispatched", "on its way",
+        "out for delivery", "in transit",
+        # Francese
+        "suivi", "livraison", "expédié", "expédiée", "colis",
+        "où est", "quand arrive", "numéro de suivi",
+        # Spagnolo
+        "seguimiento", "envío", "entrega", "dónde está", "dónde están",
+        "pedido", "paquete", "despachado", "enviado",
+        # Tedesco
+        "sendung", "lieferung", "paket", "wo ist", "versandt",
+        "tracking nummer", "lieferstatus", "wann kommt",
+        # Polacco
+        "śledzenie", "przesyłka", "dostawa", "gdzie jest", "kiedy dotrze",
+        # Arabo (per mercato halal)
+        "شحنة", "تتبع", "توصيل", "أين",
     ]
     msg_lower_track = message.lower()
     is_tracking_request = any(kw in msg_lower_track for kw in TRACKING_KEYWORDS)
@@ -974,13 +1026,21 @@ def chat():
 
         tracking_info = spediamopro_tracking_testo(search_query)
         if tracking_info:
-            tracking_ctx = f"\n\n=== TRACKING SPEDIZIONE (dati in tempo reale) ===\n{tracking_info}\nUsa queste informazioni per rispondere al cliente. Fornisci il link tracking se presente.\n"
+            tracking_ctx = (
+                f"\n\n=== TRACKING SPEDIZIONE (dati in tempo reale) ===\n{tracking_info}\n"
+                "Usa questi dati per rispondere al cliente in modo semplice e umano, come se parlassi con un artigiano. "
+                "NON usare elenchi puntati. NON usare parole tecniche. "
+                "Esempio: 'Il tuo pacco è in viaggio, arriva il 13 aprile 😊 Puoi seguirlo qui: [link]' "
+                "Se è già consegnato dillo chiaramente. Se c'è un problema dillo con gentilezza e suggerisci di contattarci.\n"
+            )
         else:
             tracking_ctx = (
                 "\n\n=== TRACKING SPEDIZIONE ===\n"
-                "Il cliente chiede informazioni sulla spedizione ma non ho trovato dati con le informazioni disponibili. "
-                "Chiedi gentilmente UNA di queste tre informazioni: il numero d'ordine, "
-                "l'indirizzo email oppure il numero di telefono usato per l'acquisto.\n"
+                "Il cliente vuole sapere dove è la sua spedizione ma non ho ancora i suoi dati per cercarla. "
+                "Chiedi SOLO questo, in modo semplice e amichevole, con una emoji: "
+                "il numero di telefono o l'email con cui ha fatto l'ordine. "
+                "NON usare liste puntate. NON usare parole tecniche come 'tracking' o 'numero d'ordine'. "
+                "Esempio di risposta ideale: 'Certo! Dimmi il tuo numero di telefono o email e controllo subito 😊'\n"
             )
     # ── FINE TRACKING ────────────────────────────────────────
 
