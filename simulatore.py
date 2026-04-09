@@ -890,19 +890,25 @@ def chat():
         search_query = message  # usa il messaggio corrente come query
 
         # Se il messaggio contiene email, usala come query principale
-        email_match = re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', message + " " + history_testo)
+        testo_completo = message + " " + history_testo
+        email_match = re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', testo_completo)
         if email_match:
             search_query = email_match.group(0)
+
+        # Se il messaggio contiene numero di telefono, usalo come query
+        tel_match = re.search(r'(?:\+?\d[\d\s\-]{7,14}\d)', testo_completo)
+        if tel_match and not email_match:
+            search_query = re.sub(r'[\s\-]', '', tel_match.group(0))
 
         tracking_info = spediamopro_tracking_testo(search_query)
         if tracking_info:
             tracking_ctx = f"\n\n=== TRACKING SPEDIZIONE (dati in tempo reale) ===\n{tracking_info}\nUsa queste informazioni per rispondere al cliente. Fornisci il link tracking se presente.\n"
         else:
-            # Sophie chiede il codice ordine o email
             tracking_ctx = (
                 "\n\n=== TRACKING SPEDIZIONE ===\n"
                 "Il cliente chiede informazioni sulla spedizione ma non ho trovato dati con le informazioni disponibili. "
-                "Chiedi gentilmente il numero d'ordine o l'indirizzo email usato per l'acquisto per poter verificare.\n"
+                "Chiedi gentilmente UNA di queste tre informazioni: il numero d'ordine, "
+                "l'indirizzo email oppure il numero di telefono usato per l'acquisto.\n"
             )
     # ── FINE TRACKING ────────────────────────────────────────
 
