@@ -1173,8 +1173,19 @@ def chat():
         elif accept_lang.startswith("sr"):
             detected_lang = "sr"
 
-    # Priorità 2: parole chiave nel messaggio (override se diverso dal browser)
-    if any(w in msg_lower for w in ["the ","is ","are ","have","what","where","how ","can ","i ","we ","my ","your "]):
+    # Priorità 2: parole chiave nel messaggio (solo parole NON ambigue)
+    # Italiano ha priorità assoluta — se ci sono parole italiane chiare, non override
+    PAROLE_ITALIANE = ["avrei","vorrei","potrei","sarei","grazie","salve","ciao",
+                       "buongiorno","buonasera","prego","gentilmente","cortesemente",
+                       "fattura","ordine","spedizione","prodotto","prezzo","offerta",
+                       "sono","siamo","abbiamo","voglio","vogliamo","devo","dobbiamo",
+                       "questo","questa","questi","queste","mio","mia","nostro","nostra"]
+    if any(w in msg_lower for w in PAROLE_ITALIANE):
+        detected_lang = "it"  # italiano confermato, non fare override
+    elif any(w in msg_lower for w in ["hello","hi ","good morning","good evening",
+                                       "i need","i want","i would","please send",
+                                       "thank you","thanks","could you","can you",
+                                       "do you have","i am","we are","my name"]):
         detected_lang = "en"
     elif any(w in msg_lower for w in ["bonjour","merci","vous ","je ","est ","les ","des ","que ","pour "]):
         detected_lang = "fr"
