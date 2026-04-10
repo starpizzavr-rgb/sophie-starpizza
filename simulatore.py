@@ -260,9 +260,26 @@ def loop_email():
     while True:
         try:
             emails = gmail_leggi_non_lette(max_results=10)
+            # Mittenti da ignorare sempre
+            MITTENTI_ESCLUSI = [
+                "mail-noreply@google.com", "no-reply@google.com",
+                "noreply@google.com", "accounts-noreply@google.com",
+                "mailer-daemon@", "postmaster@", "noreply@",
+                "no-reply@", "donotreply@", "notifications@",
+            ]
             for email in emails:
-                # Controllo doppio: DB + segna letta Gmail
+                # Salta email di sistema
+                sender_lower = email["sender"].lower()
+                if any(escluso in sender_lower for escluso in MITTENTI_ESCLUSI):
+                    gmail_segna_letta(email["id"])
+                    continue
+                # Salta email inviate da Sophie stessa
+                if SOPHIE_EMAIL.lower() in sender_lower:
+                    gmail_segna_letta(email["id"])
+                    continue
+                # Controllo doppio: DB
                 if email_gia_elaborata(email["id"]):
+                    gmail_segna_letta(email["id"])
                     continue
                 print(f"Sophie Email: elaboro email da {email['sender']} — {email['subject']}")
                 risposta = sophie_rispondi_email(email)
