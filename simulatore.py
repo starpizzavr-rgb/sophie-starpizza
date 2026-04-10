@@ -818,11 +818,48 @@ def leggi_file_testo(file_id, mime, access_token):
         print(f"Errore lettura file {file_id}: {e}")
         return ""
 
+def scansiona_cartella_ricorsiva(folder_id, access_token, percorso="", livello=0, max_livelli=5):
+    """
+    Scansiona ricorsivamente una cartella Drive fino a max_livelli di profondità.
+    Restituisce lista di {cartella, nome, id, mime}.
+    """
+    if livello > max_livelli:
+        return []
+
+    risultati = []
+    elementi = lista_file_cartella(folder_id, access_token)
+
+    for el in elementi:
+        nome = el.get("name", "")
+        mime = el.get("mimeType", "")
+        fid  = el.get("id", "")
+        percorso_corrente = f"{percorso}/{nome}" if percorso else nome
+
+        # Salta cartelle escluse
+        if nome.lower() in CARTELLE_ESCLUSE:
+            continue
+
+        if mime == "application/vnd.google-apps.folder":
+            # Ricorsione nella sottocartella
+            sotto = scansiona_cartella_ricorsiva(
+                fid, access_token, percorso_corrente, livello + 1, max_livelli
+            )
+            risultati.extend(sotto)
+        elif mime in ("application/pdf", "text/plain", "application/vnd.google-apps.document") or nome.endswith(".txt"):
+            risultati.append({
+                "cartella": percorso_corrente,
+                "nome":     nome,
+                "id":       fid,
+                "mime":     mime
+            })
+
+    return risultati
+
 def costruisci_indice_drive():
     """
-    Scansiona tutte le sottocartelle di Arcanum/ e costruisce
+    Scansiona ricorsivamente tutte le sottocartelle di Arcanum/ e costruisce
     un indice {cartella, nome_file, file_id, mime}.
-    Non scarica i file — solo registra dove sono.
+    Supporta strutture a più livelli di profondità.
     """
     global DRIVE_INDEX
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, GOOGLE_DRIVE_FOLDER_ID]):
@@ -834,44 +871,10 @@ def costruisci_indice_drive():
         print("Google Drive: impossibile ottenere access token.")
         return
 
-    print("Drive: costruzione indice in corso...")
-    nuovo_indice = []
-
-    # Lista le sottocartelle di Arcanum/
-    elementi = lista_file_cartella(GOOGLE_DRIVE_FOLDER_ID, access_token)
-    for el in elementi:
-        nome_cartella = el.get("name", "")
-        mime          = el.get("mimeType", "")
-        fid           = el.get("id", "")
-
-        # Salta cartelle escluse
-        if nome_cartella.lower() in CARTELLE_ESCLUSE:
-            continue
-
-        # Se è una cartella, scansiona il suo contenuto
-        if mime == "application/vnd.google-apps.folder":
-            file_dentro = lista_file_cartella(fid, access_token)
-            for f in file_dentro:
-                fn   = f.get("name", "")
-                fm   = f.get("mimeType", "")
-                ffid = f.get("id", "")
-                # Accetta PDF, txt, Google Doc
-                if fm in ("application/pdf", "text/plain",
-                          "application/vnd.google-apps.document") or fn.endswith(".txt"):
-                    nuovo_indice.append({
-                        "cartella": nome_cartella,
-                        "nome":     fn,
-                        "id":       ffid,
-                        "mime":     fm
-                    })
-        # File direttamente nella root di Arcanum (txt o Google Doc)
-        elif mime in ("text/plain", "application/vnd.google-apps.document") or nome_cartella.endswith(".txt"):
-            nuovo_indice.append({
-                "cartella": "Generale",
-                "nome":     nome_cartella,
-                "id":       fid,
-                "mime":     mime
-            })
+    print("Drive: costruzione indice ricorsivo in corso...")
+    nuovo_indice = scansiona_cartella_ricorsiva(
+        GOOGLE_DRIVE_FOLDER_ID, access_token, percorso="", livello=0
+    )
 
     with DRIVE_LOCK:
         DRIVE_INDEX = nuovo_indice
