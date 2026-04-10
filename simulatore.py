@@ -165,18 +165,45 @@ def sophie_rispondi_email(email):
     """Sophie legge un'email e genera una risposta automatica."""
     try:
         prompt = (
-            f"Sei Sophie, assistente virtuale di Starpizza (starpizza.org).\n"
+            f"Sei Sophie, assistente virtuale di Starpizza & co SRL (starpizza.org).\n"
             f"Hai ricevuto questa email:\n"
             f"Da: {email['sender']}\n"
             f"Oggetto: {email['subject']}\n"
             f"Testo: {email['body']}\n\n"
-            f"Rispondi in modo professionale e cordiale, nella lingua del mittente. "
-            f"Se chiedono pagamento in contrassegno: informa che non è disponibile, i metodi accettati sono carta di credito, bonifico bancario e PayPal. "
-            f"Se chiedono coordinate bancarie o IBAN: fornisci solo le coordinate ufficiali presenti nelle istruzioni. "
-            f"Se chiedono fattura: spiegare che la fattura viene emessa automaticamente dopo l'acquisto e inviata via email. "
-            f"Se chiedono spedizione o tracking: chiedi il numero d'ordine o ragione sociale per verificare. "
-            f"NON inventare dati di contatto, prezzi o informazioni non presenti. "
-            f"Firma sempre come: Sophie | Assistente Virtuale Starpizza | starpizza.org\n"
+            f"Rispondi in modo professionale e cordiale, nella lingua del mittente.\n\n"
+            f"=== CONDIZIONI DI VENDITA STARPIZZA ===\n"
+            f"PAGAMENTO — metodi accettati:\n"
+            f"1. BONIFICO BANCARIO anticipato entro 24 ore dalla conferma ordine (30% all'ordine, saldo a merce pronta)\n"
+            f"   - IBAN Italia: IT77S3609201600428248836096 — Intestatario: Starpizza & co SRL — Banca: Qonto\n"
+            f"   - IBAN Estero: IT43 D060 4511 7000 0000 5004 189 — BIC SWIFT: CRBZIT2B096 — Banca: Cassa di Risparmio di Bolzano\n"
+            f"   - Inviare copia bonifico con CRO a: starpizzavr@gmail.com\n"
+            f"2. CONTRASSEGNO (pagamento alla consegna)\n"
+            f"3. CARTA DI CREDITO\n"
+            f"4. PAYPAL — con PayPal è possibile pagare anche in 3 rate senza interessi per importi fino a 2.000 euro\n\n"
+            f"SPEDIZIONE:\n"
+            f"- Spese di trasporto variabili in base a destinazione, peso e dimensioni\n"
+            f"- Consegna al piano, facchinaggio e sponda idraulica disponibili su richiesta (costo extra)\n"
+            f"- Comunicare eventuali zone disagiate prima dell'ordine\n"
+            f"- All'arrivo controllare l'imballaggio: se danneggiato accettare con RISERVA DI CONTROLLO\n\n"
+            f"GARANZIA:\n"
+            f"- 1 anno dalla consegna contro difetti di materiale o fabbricazione\n"
+            f"- Spese di reso a carico del cliente\n\n"
+            f"RECESSO:\n"
+            f"- Senza acconto: pratica chiusa automaticamente\n"
+            f"- Con acconto versato: nessun rimborso, buono acquisto valido per l'anno in corso\n"
+            f"- Diritto di recesso solo per consumatori finali (non partite IVA), entro 14 giorni dalla consegna\n\n"
+            f"INSTALLAZIONE: esclusa, preventivo disponibile su richiesta\n\n"
+            f"=== ISTRUZIONI PER SOPHIE ===\n"
+            f"- Se chiedono metodo di pagamento: bonifico bancario, contrassegno, carta di credito, PayPal (con PayPal anche 3 rate per importi fino a 2.000€)\n"
+            f"- Se chiedono contrassegno: SÌ, è accettato\n"
+            f"- Se chiedono rate o finanziamento: disponibile con PayPal in 3 rate senza interessi fino a 2.000€\n"
+            f"- Se chiedono IBAN o coordinate bancarie: fornisci SOLO quelle indicate sopra\n"
+            f"- Se chiedono spedizione o tracking: chiedi ragione sociale o email per verificare\n"
+            f"- Se chiedono fattura: viene emessa automaticamente e inviata via email\n"
+            f"- Se chiedono installazione: non è inclusa ma disponibile su preventivo\n"
+            f"- Se chiedono garanzia: 1 anno dalla consegna\n"
+            f"- NON inventare prezzi, dati o informazioni non presenti\n"
+            f"- Firma sempre come: Sophie | Assistente Virtuale Starpizza | starpizza.org\n"
             f"Rispondi SOLO con il testo dell'email, senza oggetto."
         )
         msg = client.messages.create(
@@ -189,6 +216,40 @@ def sophie_rispondi_email(email):
         print(f"Sophie risposta email error: {e}")
         return None
 
+def email_gia_elaborata(msg_id):
+    """Controlla se abbiamo già elaborato questa email."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS email_elaborate (
+                id SERIAL PRIMARY KEY,
+                msg_id VARCHAR(128) UNIQUE,
+                elaborata_il TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        cur.execute("SELECT id FROM email_elaborate WHERE msg_id=%s", (msg_id,))
+        exists = cur.fetchone() is not None
+        cur.close(); conn.close()
+        return exists
+    except:
+        return False
+
+def segna_email_elaborata(msg_id):
+    """Registra l'email come elaborata nel DB."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO email_elaborate (msg_id) VALUES (%s)
+            ON CONFLICT (msg_id) DO NOTHING
+        """, (msg_id,))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Segna email elaborata error: {e}")
+
 def loop_email():
     """
     Thread in background: ogni 5 minuti legge le email non lette
@@ -198,21 +259,24 @@ def loop_email():
     time.sleep(30)  # aspetta avvio completo
     while True:
         try:
-            emails = gmail_leggi_non_lette(max_results=5)
+            emails = gmail_leggi_non_lette(max_results=10)
             for email in emails:
+                # Controllo doppio: DB + segna letta Gmail
+                if email_gia_elaborata(email["id"]):
+                    continue
                 print(f"Sophie Email: elaboro email da {email['sender']} — {email['subject']}")
                 risposta = sophie_rispondi_email(email)
                 if risposta:
-                    # Estrai email mittente
                     import re as _re
                     email_match = _re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', email['reply_to'])
                     if email_match:
                         dest = email_match.group(0)
                         oggetto = f"Re: {email['subject']}"
                         corpo_html = risposta.replace("\n", "<br>")
-                        gmail_invia(dest, oggetto, corpo_html)
-                        gmail_segna_letta(email["id"])
-                        print(f"Sophie Email: risposto a {dest}")
+                        if gmail_invia(dest, oggetto, corpo_html):
+                            segna_email_elaborata(email["id"])
+                            gmail_segna_letta(email["id"])
+                            print(f"Sophie Email: risposto a {dest}")
         except Exception as e:
             print(f"Loop email error: {e}")
         time.sleep(300)  # ogni 5 minuti
@@ -349,8 +413,14 @@ def loop_notifiche_spedizione():
                     spedizioni = result.get("data", [])
 
                 STATI_DA_NOTIFICARE = {6, 7, 8, 9, 11, 12}
+                from datetime import datetime, timedelta
+                data_limite = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
 
                 for sped in spedizioni:
+                    # Salta spedizioni più vecchie di 30 giorni
+                    data_creazione = sped.get("createdAt", sped.get("created_at", ""))
+                    if data_creazione and data_creazione[:10] < data_limite:
+                        continue
                     shipment_id   = sped.get("id")
                     shipment_code = sped.get("code", "")
 
@@ -386,12 +456,12 @@ def loop_notifiche_spedizione():
                         continue
 
                     oggetti = {
-                        6:  "Il tuo ordine Starpizza è in partenza 🚚",
-                        7:  "Il tuo ordine Starpizza è in viaggio 📦",
-                        8:  "Il tuo ordine Starpizza è in transito 🚚",
-                        9:  "Il tuo ordine arriva oggi! 🎉",
-                        11: "Aggiornamento spedizione Starpizza ⚠️",
-                        12: "Il tuo pacco è in giacenza 📬",
+                        6:  "Il tuo ordine Starpizza e in partenza",
+                        7:  "Il tuo ordine Starpizza e in viaggio",
+                        8:  "Il tuo ordine Starpizza e in transito",
+                        9:  "Il tuo ordine Starpizza arriva oggi",
+                        11: "Aggiornamento spedizione Starpizza",
+                        12: "Il tuo pacco Starpizza e in giacenza",
                     }
                     oggetto = oggetti.get(stato, "Aggiornamento spedizione Starpizza")
 
