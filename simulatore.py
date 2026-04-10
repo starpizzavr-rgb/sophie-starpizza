@@ -15,6 +15,396 @@ ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # ============================================================
+# GMAIL — Invio e lettura email per Sophie
+# ============================================================
+
+SOPHIE_EMAIL       = os.getenv("SOPHIE_EMAIL", "sophie@starpizza.org")
+GMAIL_CLIENT_ID    = os.getenv("GOOGLE_CLIENT_ID")
+GMAIL_CLIENT_SECRET= os.getenv("GOOGLE_CLIENT_SECRET")
+GMAIL_REFRESH_TOKEN= os.getenv("GOOGLE_REFRESH_TOKEN")
+
+def gmail_get_access_token():
+    """Ottiene access token Gmail usando il refresh token."""
+    if not all([GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN]):
+        return None
+    try:
+        import urllib.request, urllib.parse
+        data = urllib.parse.urlencode({
+            "client_id":     GMAIL_CLIENT_ID,
+            "client_secret": GMAIL_CLIENT_SECRET,
+            "refresh_token": GMAIL_REFRESH_TOKEN,
+            "grant_type":    "refresh_token"
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("access_token")
+    except Exception as e:
+        print(f"Gmail token error: {e}")
+        return None
+
+def gmail_invia(destinatario, oggetto, corpo_html, cc=None):
+    """Invia una email tramite Gmail API."""
+    import base64, urllib.request
+    token = gmail_get_access_token()
+    if not token:
+        print("Gmail: token non disponibile")
+        return False
+    try:
+        cc_line = f"Cc: {cc}\r\n" if cc else ""
+        raw_email = (
+            f"From: Sophie Starpizza <{SOPHIE_EMAIL}>\r\n"
+            f"To: {destinatario}\r\n"
+            f"{cc_line}"
+            f"Subject: {oggetto}\r\n"
+            f"MIME-Version: 1.0\r\n"
+            f"Content-Type: text/html; charset=utf-8\r\n"
+            f"\r\n"
+            f"{corpo_html}"
+        )
+        raw_b64 = base64.urlsafe_b64encode(raw_email.encode("utf-8")).decode("utf-8")
+        body = json.dumps({"raw": raw_b64}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"Gmail: email inviata a {destinatario}")
+            return True
+    except Exception as e:
+        print(f"Gmail invio error: {e}")
+        return False
+
+def gmail_leggi_non_lette(max_results=10):
+    """Legge le email non lette nella casella Sophie."""
+    import urllib.request, urllib.parse, base64
+    token = gmail_get_access_token()
+    if not token:
+        return []
+    try:
+        # Cerca email non lette
+        params = urllib.parse.urlencode({
+            "q": "is:unread -from:me",
+            "maxResults": str(max_results)
+        })
+        req = urllib.request.Request(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            messages = result.get("messages", [])
+
+        emails = []
+        for msg in messages:
+            msg_id = msg["id"]
+            req2 = urllib.request.Request(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}?format=full",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            with urllib.request.urlopen(req2, timeout=10) as resp2:
+                full_msg = json.loads(resp2.read())
+
+            headers = {h["name"]: h["value"] for h in full_msg.get("payload", {}).get("headers", [])}
+            subject = headers.get("Subject", "(nessun oggetto)")
+            sender  = headers.get("From", "")
+            reply_to= headers.get("Reply-To", sender)
+
+            # Estrai corpo
+            corpo = ""
+            payload = full_msg.get("payload", {})
+            if payload.get("body", {}).get("data"):
+                corpo = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
+            elif payload.get("parts"):
+                for part in payload["parts"]:
+                    if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                        corpo = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
+                        break
+
+            emails.append({
+                "id":       msg_id,
+                "subject":  subject,
+                "sender":   sender,
+                "reply_to": reply_to,
+                "body":     corpo[:3000]
+            })
+        return emails
+    except Exception as e:
+        print(f"Gmail lettura error: {e}")
+        return []
+
+def gmail_segna_letta(msg_id):
+    """Segna un messaggio come letto."""
+    import urllib.request
+    token = gmail_get_access_token()
+    if not token:
+        return
+    try:
+        body = json.dumps({"removeLabelIds": ["UNREAD"]}).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}/modify",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"Gmail segna letta error: {e}")
+
+def sophie_rispondi_email(email):
+    """Sophie legge un'email e genera una risposta automatica."""
+    try:
+        prompt = (
+            f"Sei Sophie, assistente virtuale di Starpizza (starpizza.org).\n"
+            f"Hai ricevuto questa email:\n"
+            f"Da: {email['sender']}\n"
+            f"Oggetto: {email['subject']}\n"
+            f"Testo: {email['body']}\n\n"
+            f"Rispondi in modo professionale e cordiale, nella lingua del mittente. "
+            f"Se chiedono pagamento in contrassegno: informa che non è disponibile, i metodi accettati sono carta di credito, bonifico bancario e PayPal. "
+            f"Se chiedono coordinate bancarie o IBAN: fornisci solo le coordinate ufficiali presenti nelle istruzioni. "
+            f"Se chiedono fattura: spiegare che la fattura viene emessa automaticamente dopo l'acquisto e inviata via email. "
+            f"Se chiedono spedizione o tracking: chiedi il numero d'ordine o ragione sociale per verificare. "
+            f"NON inventare dati di contatto, prezzi o informazioni non presenti. "
+            f"Firma sempre come: Sophie | Assistente Virtuale Starpizza | starpizza.org\n"
+            f"Rispondi SOLO con il testo dell'email, senza oggetto."
+        )
+        msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        print(f"Sophie risposta email error: {e}")
+        return None
+
+def loop_email():
+    """
+    Thread in background: ogni 5 minuti legge le email non lette
+    e risponde automaticamente.
+    """
+    print("Sophie Email Loop: avviato")
+    time.sleep(30)  # aspetta avvio completo
+    while True:
+        try:
+            emails = gmail_leggi_non_lette(max_results=5)
+            for email in emails:
+                print(f"Sophie Email: elaboro email da {email['sender']} — {email['subject']}")
+                risposta = sophie_rispondi_email(email)
+                if risposta:
+                    # Estrai email mittente
+                    import re as _re
+                    email_match = _re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', email['reply_to'])
+                    if email_match:
+                        dest = email_match.group(0)
+                        oggetto = f"Re: {email['subject']}"
+                        corpo_html = risposta.replace("\n", "<br>")
+                        gmail_invia(dest, oggetto, corpo_html)
+                        gmail_segna_letta(email["id"])
+                        print(f"Sophie Email: risposto a {dest}")
+        except Exception as e:
+            print(f"Loop email error: {e}")
+        time.sleep(300)  # ogni 5 minuti
+
+# ============================================================
+# NOTIFICHE SPEDIZIONE — Monitor SpediamoPro
+# ============================================================
+
+# Tabella per tracciare spedizioni già notificate
+def init_notifiche_db():
+    """Crea la tabella notifiche se non esiste."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS spedizioni_notificate (
+                id              SERIAL PRIMARY KEY,
+                shipment_code   VARCHAR(64) UNIQUE,
+                stato_notificato INTEGER,
+                email_cliente   VARCHAR(256),
+                nome_cliente    VARCHAR(256),
+                notificato_il   TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Init notifiche DB error: {e}")
+
+def notifica_gia_inviata(shipment_code, stato):
+    """Controlla se abbiamo già notificato questo stato per questa spedizione."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute(
+            "SELECT id FROM spedizioni_notificate WHERE shipment_code=%s AND stato_notificato=%s",
+            (shipment_code, stato)
+        )
+        exists = cur.fetchone() is not None
+        cur.close(); conn.close()
+        return exists
+    except:
+        return False
+
+def segna_notifica_inviata(shipment_code, stato, email_cliente, nome_cliente):
+    """Registra che abbiamo inviato la notifica."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO spedizioni_notificate (shipment_code, stato_notificato, email_cliente, nome_cliente)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (shipment_code) DO UPDATE SET
+                stato_notificato = EXCLUDED.stato_notificato,
+                notificato_il    = NOW()
+        """, (shipment_code, stato, email_cliente, nome_cliente))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Segna notifica error: {e}")
+
+def genera_email_spedizione(nome, tracking_url, tracking_code, corriere, data_consegna, stato):
+    """Genera il corpo HTML dell'email di notifica spedizione."""
+    if stato in [6, 7, 8]:  # spedita / in transito
+        titolo  = "Il tuo ordine è in viaggio! 🚚"
+        intro   = f"Ciao {nome},<br><br>ottima notizia! Il tuo ordine è stato spedito ed è in viaggio verso di te."
+        colore  = "#27ae60"
+    elif stato == 9:  # in consegna oggi
+        titolo  = "Il tuo ordine arriva oggi! 📦"
+        intro   = f"Ciao {nome},<br><br>oggi è il grande giorno! Il corriere consegnerà il tuo ordine in giornata."
+        colore  = "#e67e22"
+    elif stato == 11:  # eccezione/problema
+        titolo  = "Aggiornamento sulla tua spedizione ⚠️"
+        intro   = f"Ciao {nome},<br><br>volevo aggiornarti sulla tua spedizione. Si è verificato un piccolo intoppo."
+        colore  = "#e74c3c"
+    elif stato == 12:  # giacenza
+        titolo  = "Il tuo pacco è in giacenza 📬"
+        intro   = f"Ciao {nome},<br><br>il corriere ha tentato la consegna ma non ha trovato nessuno. Il tuo pacco è ora in giacenza."
+        colore  = "#e74c3c"
+    else:
+        return None
+
+    data_str = f"<br><strong>Consegna prevista:</strong> {data_consegna}" if data_consegna else ""
+    link_str = f'<br><br><a href="{tracking_url}" style="background:{colore};color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin-top:8px;">📍 Traccia la spedizione</a>' if tracking_url else ""
+
+    return f"""
+    <div style="font-family:'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#f9f9f9;border-radius:12px;overflow:hidden;">
+        <div style="background:{colore};padding:24px;text-align:center;">
+            <h1 style="color:white;margin:0;font-size:1.4rem;">{titolo}</h1>
+        </div>
+        <div style="padding:28px;background:white;">
+            <p style="color:#333;line-height:1.7;">{intro}</p>
+            <div style="background:#f5f5f5;border-radius:8px;padding:16px;margin:16px 0;">
+                <strong>Corriere:</strong> {corriere}<br>
+                <strong>Codice tracking:</strong> {tracking_code}
+                {data_str}
+            </div>
+            {link_str}
+            <p style="color:#888;font-size:0.85rem;margin-top:24px;">
+                Per qualsiasi domanda rispondi a questa email o visita <a href="https://starpizza.org">starpizza.org</a>
+            </p>
+        </div>
+        <div style="background:#c0392b;padding:14px;text-align:center;">
+            <span style="color:white;font-size:0.8rem;">Sophie | Assistente Virtuale Starpizza</span>
+        </div>
+    </div>
+    """
+
+def loop_notifiche_spedizione():
+    """
+    Thread in background: ogni 15 minuti controlla le spedizioni
+    e invia notifiche email ai clienti per stati importanti.
+    """
+    print("Sophie Notifiche: avviato")
+    init_notifiche_db()
+    time.sleep(60)  # aspetta avvio completo
+    while True:
+        try:
+            token = spediamopro_get_token()
+            if token:
+                import urllib.request
+                # Cerca spedizioni attive (stati 5-12)
+                body = json.dumps({"statuses": [5, 6, 7, 8, 9, 11, 12]}).encode("utf-8")
+                req  = urllib.request.Request(
+                    f"{SPEDIAMOPRO_BASE_URL}/shipments/search?perPage=50",
+                    data=body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type":  "application/json"
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    result = json.loads(resp.read())
+                    spedizioni = result.get("data", [])
+
+                STATI_DA_NOTIFICARE = {6, 7, 8, 9, 11, 12}
+
+                for sped in spedizioni:
+                    shipment_id   = sped.get("id")
+                    shipment_code = sped.get("code", "")
+
+                    # Recupera tracking dettagliato
+                    tracking = spediamopro_get_tracking(shipment_id)
+                    if not tracking:
+                        continue
+
+                    stato         = tracking.get("status", -1)
+                    tracking_url  = tracking.get("url", "")
+                    tracking_code = tracking.get("trackingCode", "")
+                    corriere      = tracking.get("courier", "")
+                    data_consegna = tracking.get("expectedDeliveryDate", "")
+
+                    if stato not in STATI_DA_NOTIFICARE:
+                        continue
+                    if notifica_gia_inviata(shipment_code, stato):
+                        continue
+
+                    # Recupera email e nome destinatario dalla spedizione
+                    consignee  = sped.get("consignee", {})
+                    email_dest = consignee.get("email", "")
+                    nome_dest  = consignee.get("name", "Cliente")
+
+                    if not email_dest:
+                        continue
+
+                    corpo = genera_email_spedizione(
+                        nome_dest, tracking_url, tracking_code,
+                        corriere, data_consegna, stato
+                    )
+                    if not corpo:
+                        continue
+
+                    oggetti = {
+                        6:  "Il tuo ordine Starpizza è in partenza 🚚",
+                        7:  "Il tuo ordine Starpizza è in viaggio 📦",
+                        8:  "Il tuo ordine Starpizza è in transito 🚚",
+                        9:  "Il tuo ordine arriva oggi! 🎉",
+                        11: "Aggiornamento spedizione Starpizza ⚠️",
+                        12: "Il tuo pacco è in giacenza 📬",
+                    }
+                    oggetto = oggetti.get(stato, "Aggiornamento spedizione Starpizza")
+
+                    if gmail_invia(email_dest, oggetto, corpo):
+                        segna_notifica_inviata(shipment_code, stato, email_dest, nome_dest)
+                        print(f"Notifica inviata: {shipment_code} stato {stato} → {email_dest}")
+
+        except Exception as e:
+            print(f"Loop notifiche error: {e}")
+
+        time.sleep(900)  # ogni 15 minuti
+
+# ============================================================
 # SPEDIAMOPRO — Tracking spedizioni
 # ============================================================
 
@@ -515,6 +905,14 @@ print("Costruzione indice Google Drive...")
 costruisci_indice_drive()
 t = threading.Thread(target=aggiorna_drive_loop, daemon=True)
 t.start()
+
+# Avvia loop email Sophie
+t_email = threading.Thread(target=loop_email, daemon=True)
+t_email.start()
+
+# Avvia loop notifiche spedizione
+t_notifiche = threading.Thread(target=loop_notifiche_spedizione, daemon=True)
+t_notifiche.start()
 
 SINONIMI = {
     "teglia":         ["teglie","stampo","stampi","placca","placche","formina"],
