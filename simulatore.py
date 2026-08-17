@@ -528,7 +528,7 @@ def chat():
         histories[cid] = []
     history = histories[cid]
 
-    last = [m["content"] for m in history if m["role"] == "user"][-2:]
+    last = [m["content"] for m in history if m["role"] == "user" and isinstance(m["content"], str)][-2:]
     q    = " ".join(last + [message])
 
     docs     = get_docs(q)
