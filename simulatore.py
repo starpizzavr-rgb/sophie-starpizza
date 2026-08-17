@@ -151,9 +151,10 @@ def filtra_con_claude(query, candidati, limit=4):
             model="claude-haiku-4-5-20251001",
             max_tokens=50,
             temperature=0,
+            thinking={"type": "disabled"},
             messages=[{"role": "user", "content": prompt}]
         )
-        risposta = msg.content[0].text.strip()
+        risposta = next((b.text for b in msg.content if b.type == "text"), "").strip()
         numeri = [int(x.strip()) - 1 for x in risposta.split(",") if x.strip().isdigit()]
         selezionati = [candidati[n] for n in numeri if 0 <= n < len(candidati)]
         return selezionati[:limit]
