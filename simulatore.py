@@ -96,6 +96,7 @@ INDEX_FILE    = r"C:\email-intelligence\product_index.json"
 client   = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 app      = Flask(__name__)
 histories = {}
+cliente_identificato = {}  # {cid: {"piva": ..., "cf": ...}} — ricordato per tutta la conversazione
 
 # Carica indice prodotti in memoria all'avvio
 print("Caricamento indice prodotti...")
@@ -516,23 +517,31 @@ def chat():
     emails   = get_emails(q)
     products = cerca_prodotti(q, limit=4)
 
-    # Riordino: se il cliente scrive una P.IVA o un Codice Fiscale, cerchiamo
-    # il suo storico ordini reale su Arcanum (FattureInCloud)
+    # Riordino: se il cliente scrive una P.IVA/CF lo ricordiamo per tutta la
+    # sessione, cosi' non deve ripeterlo ad ogni messaggio. Prendiamo SEMPRE
+    # lo storico ordini COMPLETO (non filtrato per categoria): filtrare subito
+    # rischia di nascondere prodotti (es. teglie) presenti nella stessa fattura
+    # dei carrelli chiesti inizialmente. Lascia a Claude scegliere cosa mostrare.
     storico_ctx = ""
     piva_rilevata, cf_rilevato = estrai_piva_o_cf(message)
+    if not (piva_rilevata or cf_rilevato) and cid in cliente_identificato:
+        piva_rilevata = cliente_identificato[cid].get("piva")
+        cf_rilevato = cliente_identificato[cid].get("cf")
+    elif piva_rilevata or cf_rilevato:
+        cliente_identificato[cid] = {"piva": piva_rilevata, "cf": cf_rilevato}
+
     if piva_rilevata or cf_rilevato:
-        categoria_rilevata = estrai_categoria_riordino(q)
-        esito = cerca_storico_cliente(piva=piva_rilevata, cf=cf_rilevato, categoria=categoria_rilevata)
+        esito = cerca_storico_cliente(piva=piva_rilevata, cf=cf_rilevato)
         if esito and esito.get("trovato"):
             ordini = esito.get("ordini", [])
             if ordini:
-                storico_ctx = f"\n\n=== STORICO ORDINI REALI DI {esito.get('cliente_nome','')} (da FattureInCloud) ===\n"
-                for o in ordini[:15]:
+                storico_ctx = f"\n\n=== STORICO ORDINI REALI DI {esito.get('cliente_nome','')} (da FattureInCloud, TUTTI i prodotti comprati) ===\n"
+                for o in ordini[:40]:
                     storico_ctx += (f"\n- {o['data']} | fatt. #{o['numero_fattura']} | {o['prodotto_nome']} "
                                      f"(cod. {o['prodotto_codice']}) | qta {o['quantita']}\n")
-                storico_ctx += "\nMostra al cliente queste opzioni reali e chiedigli quale vuole riordinare (quantita' inclusa). NON inventare prodotti non presenti in questa lista.\n"
+                storico_ctx += "\nQuesta e' la lista COMPLETA di tutto cio' che il cliente ha comprato. Rispondi solo in base a questi dati reali (anche per domande su categorie diverse da quella iniziale, es. teglie oltre a carrelli). NON dire 'non risulta' se il prodotto e' nella lista sopra. NON inventare prodotti non presenti in questa lista.\n"
             else:
-                storico_ctx = f"\n\n=== Cliente {esito.get('cliente_nome','')} trovato, ma nessun ordine storico compatibile trovato. Dillo chiaramente, non inventare. ===\n"
+                storico_ctx = f"\n\n=== Cliente {esito.get('cliente_nome','')} trovato, ma nessun ordine storico trovato. Dillo chiaramente, non inventare. ===\n"
         elif esito and not esito.get("trovato"):
             storico_ctx = "\n\n=== Nessun cliente trovato su FattureInCloud con questa P.IVA/CF. Chiedi conferma del dato o offri di procedere come nuovo cliente. ===\n"
 
