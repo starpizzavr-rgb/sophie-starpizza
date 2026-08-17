@@ -15,6 +15,18 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ARCANUM_URL     = os.getenv("ARCANUM_URL", "https://arcanum-starpizza-production.up.railway.app")
 ARCANUM_API_KEY = os.getenv("ARCANUM_API_KEY")
 
+def crea_preventivo_arcanum(piva, cf, righe):
+    """Chiama Arcanum per creare una bozza di preventivo su FattureInCloud."""
+    try:
+        headers = {"X-Arcanum-Key": ARCANUM_API_KEY} if ARCANUM_API_KEY else {}
+        r = requests.post(f"{ARCANUM_URL}/api/sophie/crea-preventivo",
+                           json={"piva": piva, "cf": cf, "righe": righe},
+                           headers=headers, timeout=20)
+        return r.json()
+    except Exception as e:
+        return {"ok": False, "errore": str(e)}
+
+
 def cerca_storico_cliente(piva=None, cf=None, categoria=None):
     """Interroga Arcanum per lo storico ordini reali di un cliente (via P.IVA/CF).
     Ritorna dict {trovato, cliente_nome, ordini} oppure None se la chiamata fallisce."""
@@ -678,21 +690,70 @@ def chat():
         "- NON citare mai il brand del produttore.\n"
         "- LINK: usa SOLO i link dalla sezione PRODOTTI STARPIZZA TROVATI qui sotto. NON inventare mai link. Se non trovi il prodotto nei PRODOTTI TROVATI, manda il cliente su starpizza.org/negozio senza inventare URL.\n"
         "- EMAIL: chiedi solo per preventivi, resi o assistenza.\n"
-        "- RIORDINO: se il cliente chiede di ordinare qualcosa 'come l'ultima volta', 'uguale all'ultimo ordine' o simile, e non hai ancora la sua P.IVA o Codice Fiscale in questa conversazione, chiedigli SOLO quello (ragione sociale e P.IVA/CF) prima di proseguire. Se piu' sotto trovi uno STORICO ORDINI REALI, usa SOLO quei dati per rispondere, mai inventare.\n"
+        "- RIORDINO: se il cliente chiede di ordinare qualcosa 'come l'ultima volta', 'uguale all'ultimo ordine' o simile, e non hai ancora la sua P.IVA o Codice Fiscale in questa conversazione, chiedigli SOLO quello (ragione sociale e P.IVA/CF) prima di proseguire. Se piu' sotto trovi uno STORICO ORDINI REALI, usa SOLO quei dati per rispondere, mai inventare. Quando il cliente ha CONFERMATO chiaramente ed esplicitamente quali prodotti e quali quantita' vuole riordinare (anche se diverse da quelle originali), usa lo strumento crea_preventivo per preparare la bozza. NON usarlo per semplici domande o se la conferma non e' chiara al 100%.\n"
         + docs_ctx + email_ctx + products_ctx + correzioni_ctx + storico_ctx
     )
     history.append({"role": "user", "content": message})
 
+    STRUMENTI = [{
+        "name": "crea_preventivo",
+        "description": "Crea una bozza di preventivo/proforma su FattureInCloud per il cliente gia' identificato in questa conversazione (P.IVA/CF gia' noti). Usalo SOLO dopo che il cliente ha confermato ESPLICITAMENTE quali prodotti e quali quantita' vuole riordinare. Non usarlo per semplici domande o richieste di informazioni.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "righe": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "prodotto_nome": {"type": "string"},
+                            "prodotto_codice": {"type": "string"},
+                            "quantita": {"type": "number"}
+                        },
+                        "required": ["prodotto_nome", "quantita"]
+                    }
+                }
+            },
+            "required": ["righe"]
+        }
+    }] if (piva_rilevata or cf_rilevato) else []
+
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=180,
+            max_tokens=500,
             system=system,
             thinking={"type": "disabled"},
+            tools=STRUMENTI,
             messages=history
         )
-        response = next((b.text for b in msg.content if b.type == "text"), "").strip()
-        history.append({"role": "assistant", "content": response})
+
+        if msg.stop_reason == "tool_use":
+            tool_block = next((b for b in msg.content if b.type == "tool_use"), None)
+
+            righe = tool_block.input.get("righe", []) if tool_block else []
+            esito = crea_preventivo_arcanum(piva_rilevata, cf_rilevato, righe)
+
+            history.append({"role": "assistant", "content": msg.content})
+            history.append({"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_block.id,
+                "content": json.dumps(esito, ensure_ascii=False)
+            }]})
+
+            msg2 = client.messages.create(
+                model="claude-sonnet-5",
+                max_tokens=200,
+                system=system,
+                thinking={"type": "disabled"},
+                messages=history
+            )
+            response = next((b.text for b in msg2.content if b.type == "text"), "").strip()
+            history.append({"role": "assistant", "content": response})
+        else:
+            response = next((b.text for b in msg.content if b.type == "text"), "").strip()
+            history.append({"role": "assistant", "content": response})
+
         if len(history) > 40:
             histories[cid] = history[-40:]
         # Salva conversazione nel DB
