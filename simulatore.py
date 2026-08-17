@@ -15,16 +15,22 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ARCANUM_URL     = os.getenv("ARCANUM_URL", "https://arcanum-starpizza-production.up.railway.app")
 ARCANUM_API_KEY = os.getenv("ARCANUM_API_KEY")
 
-def crea_preventivo_arcanum(piva, cf, righe):
+def crea_preventivo_arcanum(piva, cf, righe, email_cliente=None):
     """Chiama Arcanum per creare una bozza di preventivo su FattureInCloud."""
     try:
         headers = {"X-Arcanum-Key": ARCANUM_API_KEY} if ARCANUM_API_KEY else {}
         r = requests.post(f"{ARCANUM_URL}/api/sophie/crea-preventivo",
-                           json={"piva": piva, "cf": cf, "righe": righe},
+                           json={"piva": piva, "cf": cf, "righe": righe, "email_cliente": email_cliente},
                            headers=headers, timeout=20)
         return r.json()
     except Exception as e:
         return {"ok": False, "errore": str(e)}
+
+
+def estrai_email(testo):
+    """Cerca un indirizzo email nel testo del messaggio."""
+    m = re.search(r'\b[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}\b', testo)
+    return m.group(0) if m else None
 
 
 def cerca_storico_cliente(piva=None, cf=None, categoria=None):
@@ -546,6 +552,7 @@ def chat():
         esito = cerca_storico_cliente(piva=piva_rilevata, cf=cf_rilevato)
         if esito and esito.get("trovato"):
             ordini = esito.get("ordini", [])
+            email_cliente_fic = esito.get("cliente_email")
             if ordini:
                 storico_ctx = f"\n\n=== STORICO ORDINI REALI DI {esito.get('cliente_nome','')} (da FattureInCloud, TUTTI i prodotti comprati) ===\n"
                 for o in ordini[:40]:
@@ -554,6 +561,9 @@ def chat():
                 storico_ctx += "\nQuesta e' la lista COMPLETA di tutto cio' che il cliente ha comprato. Rispondi solo in base a questi dati reali (anche per domande su categorie diverse da quella iniziale, es. teglie oltre a carrelli). NON dire 'non risulta' se il prodotto e' nella lista sopra. NON inventare prodotti non presenti in questa lista.\n"
             else:
                 storico_ctx = f"\n\n=== Cliente {esito.get('cliente_nome','')} trovato, ma nessun ordine storico trovato. Dillo chiaramente, non inventare. ===\n"
+
+            if not email_cliente_fic:
+                storico_ctx += "\nATTENZIONE: questo cliente NON ha un'email registrata. Prima di confermare qualsiasi riordino (prima di usare lo strumento crea_preventivo), chiedigli la sua email — serve per inviargli il preventivo.\n"
         elif esito and not esito.get("trovato"):
             storico_ctx = "\n\n=== Nessun cliente trovato su FattureInCloud con questa P.IVA/CF. Chiedi conferma del dato o offri di procedere come nuovo cliente. ===\n"
 
@@ -732,7 +742,13 @@ def chat():
             tool_block = next((b for b in msg.content if b.type == "tool_use"), None)
 
             righe = tool_block.input.get("righe", []) if tool_block else []
-            esito = crea_preventivo_arcanum(piva_rilevata, cf_rilevato, righe)
+            email_dalla_conversazione = None
+            for m in reversed(history):
+                if m.get("role") == "user" and isinstance(m.get("content"), str):
+                    email_dalla_conversazione = estrai_email(m["content"])
+                    if email_dalla_conversazione:
+                        break
+            esito = crea_preventivo_arcanum(piva_rilevata, cf_rilevato, righe, email_cliente=email_dalla_conversazione)
 
             history.append({"role": "assistant", "content": msg.content})
             history.append({"role": "user", "content": [{
