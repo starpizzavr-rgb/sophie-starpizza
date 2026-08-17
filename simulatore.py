@@ -4,6 +4,7 @@ import anthropic
 import json
 import os
 import re
+import requests
 from dotenv import load_dotenv
 import numpy as np
 
@@ -11,6 +12,56 @@ load_dotenv()
 DATABASE_URL  = os.getenv("DATABASE_URL")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ARCANUM_URL     = os.getenv("ARCANUM_URL", "https://arcanum-starpizza-production.up.railway.app")
+ARCANUM_API_KEY = os.getenv("ARCANUM_API_KEY")
+
+def cerca_storico_cliente(piva=None, cf=None, categoria=None):
+    """Interroga Arcanum per lo storico ordini reali di un cliente (via P.IVA/CF).
+    Ritorna dict {trovato, cliente_nome, ordini} oppure None se la chiamata fallisce."""
+    if not piva and not cf:
+        return None
+    try:
+        params = {}
+        if piva: params["piva"] = piva
+        if cf: params["cf"] = cf
+        if categoria: params["categoria"] = categoria
+        headers = {"X-Arcanum-Key": ARCANUM_API_KEY} if ARCANUM_API_KEY else {}
+        r = requests.get(f"{ARCANUM_URL}/api/sophie/storico-cliente",
+                          params=params, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"Arcanum storico-cliente: status {r.status_code}")
+            return None
+        return r.json()
+    except Exception as e:
+        print(f"Errore chiamata Arcanum: {e}")
+        return None
+
+
+def estrai_piva_o_cf(testo):
+    """Cerca nel messaggio una P.IVA italiana (11 cifre) o un Codice Fiscale (16 caratteri)."""
+    m_piva = re.search(r'\b\d{11}\b', testo)
+    if m_piva:
+        return m_piva.group(0), None
+    m_cf = re.search(r'\b[A-Za-z]{6}\d{2}[A-Za-z]\d{2}[A-Za-z]\d{3}[A-Za-z]\b', testo)
+    if m_cf:
+        return None, m_cf.group(0).upper()
+    return None, None
+
+
+def estrai_categoria_riordino(testo):
+    """Se il messaggio menziona una delle nostre linee di business, la usa per
+    filtrare lo storico (es. 'carrelli' -> 'Carrelli')."""
+    t = testo.lower()
+    mappa = {
+        "carrell": "Carrelli", "teglia": "Teglie", "teglie": "Teglie",
+        "ballmatic": "Ballmatic", "arrotondatric": "Ballmatic",
+        "ricambi": "Ricambi / Accessori", "accessori": "Ricambi / Accessori",
+    }
+    for chiave, categoria in mappa.items():
+        if chiave in t:
+            return categoria
+    return None
+
 
 def get_embedding(text):
     """Genera embedding OpenAI per un testo."""
@@ -465,6 +516,26 @@ def chat():
     emails   = get_emails(q)
     products = cerca_prodotti(q, limit=4)
 
+    # Riordino: se il cliente scrive una P.IVA o un Codice Fiscale, cerchiamo
+    # il suo storico ordini reale su Arcanum (FattureInCloud)
+    storico_ctx = ""
+    piva_rilevata, cf_rilevato = estrai_piva_o_cf(message)
+    if piva_rilevata or cf_rilevato:
+        categoria_rilevata = estrai_categoria_riordino(q)
+        esito = cerca_storico_cliente(piva=piva_rilevata, cf=cf_rilevato, categoria=categoria_rilevata)
+        if esito and esito.get("trovato"):
+            ordini = esito.get("ordini", [])
+            if ordini:
+                storico_ctx = f"\n\n=== STORICO ORDINI REALI DI {esito.get('cliente_nome','')} (da FattureInCloud) ===\n"
+                for o in ordini[:15]:
+                    storico_ctx += (f"\n- {o['data']} | fatt. #{o['numero_fattura']} | {o['prodotto_nome']} "
+                                     f"(cod. {o['prodotto_codice']}) | qta {o['quantita']}\n")
+                storico_ctx += "\nMostra al cliente queste opzioni reali e chiedigli quale vuole riordinare (quantita' inclusa). NON inventare prodotti non presenti in questa lista.\n"
+            else:
+                storico_ctx = f"\n\n=== Cliente {esito.get('cliente_nome','')} trovato, ma nessun ordine storico compatibile trovato. Dillo chiaramente, non inventare. ===\n"
+        elif esito and not esito.get("trovato"):
+            storico_ctx = "\n\n=== Nessun cliente trovato su FattureInCloud con questa P.IVA/CF. Chiedi conferma del dato o offri di procedere come nuovo cliente. ===\n"
+
     # Recupera correzioni simili salvate dal titolare (autoapprendimento)
     correzioni_ctx = ""
     try:
@@ -598,7 +669,8 @@ def chat():
         "- NON citare mai il brand del produttore.\n"
         "- LINK: usa SOLO i link dalla sezione PRODOTTI STARPIZZA TROVATI qui sotto. NON inventare mai link. Se non trovi il prodotto nei PRODOTTI TROVATI, manda il cliente su starpizza.org/negozio senza inventare URL.\n"
         "- EMAIL: chiedi solo per preventivi, resi o assistenza.\n"
-        + docs_ctx + email_ctx + products_ctx + correzioni_ctx
+        "- RIORDINO: se il cliente chiede di ordinare qualcosa 'come l'ultima volta', 'uguale all'ultimo ordine' o simile, e non hai ancora la sua P.IVA o Codice Fiscale in questa conversazione, chiedigli SOLO quello (ragione sociale e P.IVA/CF) prima di proseguire. Se piu' sotto trovi uno STORICO ORDINI REALI, usa SOLO quei dati per rispondere, mai inventare.\n"
+        + docs_ctx + email_ctx + products_ctx + correzioni_ctx + storico_ctx
     )
     history.append({"role": "user", "content": message})
 
