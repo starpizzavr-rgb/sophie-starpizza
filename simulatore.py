@@ -606,9 +606,10 @@ def chat():
             model="claude-sonnet-5",
             max_tokens=180,
             system=system,
+            thinking={"type": "disabled"},
             messages=history
         )
-        response = msg.content[0].text.strip()
+        response = next((b.text for b in msg.content if b.type == "text"), "").strip()
         history.append({"role": "assistant", "content": response})
         if len(history) > 40:
             histories[cid] = history[-40:]
