@@ -591,6 +591,7 @@ def chat():
         "- UNA sola domanda di follow-up al massimo.\n"
         "- Rispondi SEMPRE nella lingua del cliente.\n\n"
         "REGOLE:\n"
+        "- PRECISIONE: dai sempre la risposta piu probabile e coerente con i dati forniti, senza variare tono o contenuto tra risposte simili. Evita formulazioni creative o alternative quando i dati sono chiari.\n"
         f"- {note}{prod_note}\n"
         "- NON inventare prezzi o specifiche tecniche.\n"
         "- NON citare mai il brand del produttore.\n"
@@ -604,7 +605,6 @@ def chat():
         msg = client.messages.create(
             model="claude-sonnet-5",
             max_tokens=180,
-            temperature=0.1,
             system=system,
             messages=history
         )
