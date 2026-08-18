@@ -55,31 +55,6 @@ def cerca_storico_cliente(piva=None, cf=None, categoria=None):
         return None
 
 
-def estrai_piva_o_cf(testo):
-    """Cerca nel messaggio una P.IVA italiana (11 cifre) o un Codice Fiscale (16 caratteri)."""
-    m_piva = re.search(r'\b\d{11}\b', testo)
-    if m_piva:
-        return m_piva.group(0), None
-    m_cf = re.search(r'\b[A-Za-z]{6}\d{2}[A-Za-z]\d{2}[A-Za-z]\d{3}[A-Za-z]\b', testo)
-    if m_cf:
-        return None, m_cf.group(0).upper()
-    return None, None
-
-
-def estrai_categoria_riordino(testo):
-    """Se il messaggio menziona una delle nostre linee di business, la usa per
-    filtrare lo storico (es. 'carrelli' -> 'Carrelli')."""
-    t = testo.lower()
-    mappa = {
-        "carrell": "Carrelli", "teglia": "Teglie", "teglie": "Teglie",
-        "ballmatic": "Ballmatic", "arrotondatric": "Ballmatic",
-        "ricambi": "Ricambi / Accessori", "accessori": "Ricambi / Accessori",
-    }
-    for chiave, categoria in mappa.items():
-        if chiave in t:
-            return categoria
-    return None
-
 
 def get_embedding(text):
     """Genera embedding OpenAI per un testo."""
@@ -367,6 +342,7 @@ document.getElementById('inp').addEventListener('keydown', function(e) {
 
 function resetChat() {
   fetch('/reset', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cid:cid})});
+  cid = Math.random().toString(36).slice(2);
   document.getElementById('chat').innerHTML = '';
   fetch('/welcome').then(function(r){return r.json();}).then(function(d){
     var chat = document.getElementById('chat');
@@ -511,7 +487,9 @@ def index():
 @app.route("/reset", methods=["POST"])
 def reset():
     data = request.json or {}
-    histories[data.get("cid", "default")] = []
+    cid = data.get("cid", "default")
+    histories[cid] = []
+    cliente_identificato.pop(cid, None)
     return jsonify({"ok": True})
 
 
@@ -534,38 +512,6 @@ def chat():
     docs     = get_docs(q)
     emails   = get_emails(q)
     products = cerca_prodotti(q, limit=4)
-
-    # Riordino: se il cliente scrive una P.IVA/CF lo ricordiamo per tutta la
-    # sessione, cosi' non deve ripeterlo ad ogni messaggio. Prendiamo SEMPRE
-    # lo storico ordini COMPLETO (non filtrato per categoria): filtrare subito
-    # rischia di nascondere prodotti (es. teglie) presenti nella stessa fattura
-    # dei carrelli chiesti inizialmente. Lascia a Claude scegliere cosa mostrare.
-    storico_ctx = ""
-    piva_rilevata, cf_rilevato = estrai_piva_o_cf(message)
-    if not (piva_rilevata or cf_rilevato) and cid in cliente_identificato:
-        piva_rilevata = cliente_identificato[cid].get("piva")
-        cf_rilevato = cliente_identificato[cid].get("cf")
-    elif piva_rilevata or cf_rilevato:
-        cliente_identificato[cid] = {"piva": piva_rilevata, "cf": cf_rilevato}
-
-    if piva_rilevata or cf_rilevato:
-        esito = cerca_storico_cliente(piva=piva_rilevata, cf=cf_rilevato)
-        if esito and esito.get("trovato"):
-            ordini = esito.get("ordini", [])
-            email_cliente_fic = esito.get("cliente_email")
-            if ordini:
-                storico_ctx = f"\n\n=== STORICO ORDINI REALI DI {esito.get('cliente_nome','')} (da FattureInCloud, TUTTI i prodotti comprati) ===\n"
-                for o in ordini[:40]:
-                    storico_ctx += (f"\n- {o['data']} | fatt. #{o['numero_fattura']} | {o['prodotto_nome']} "
-                                     f"(cod. {o['prodotto_codice']}) | qta {o['quantita']}\n")
-                storico_ctx += "\nQuesta e' la lista COMPLETA di tutto cio' che il cliente ha comprato. Rispondi solo in base a questi dati reali (anche per domande su categorie diverse da quella iniziale, es. teglie oltre a carrelli). NON dire 'non risulta' se il prodotto e' nella lista sopra. NON inventare prodotti non presenti in questa lista.\n"
-            else:
-                storico_ctx = f"\n\n=== Cliente {esito.get('cliente_nome','')} trovato, ma nessun ordine storico trovato. Dillo chiaramente, non inventare. ===\n"
-
-            if not email_cliente_fic:
-                storico_ctx += "\nATTENZIONE: questo cliente NON ha un'email registrata. Prima di confermare qualsiasi riordino (prima di usare lo strumento crea_preventivo), chiedigli la sua email — serve per inviargli il preventivo.\n"
-        elif esito and not esito.get("trovato"):
-            storico_ctx = "\n\n=== Nessun cliente trovato su FattureInCloud con questa P.IVA/CF. Chiedi conferma del dato o offri di procedere come nuovo cliente. ===\n"
 
     # Recupera correzioni simili salvate dal titolare (autoapprendimento)
     correzioni_ctx = ""
@@ -700,74 +646,112 @@ def chat():
         "- NON citare mai il brand del produttore.\n"
         "- LINK: usa SOLO i link dalla sezione PRODOTTI STARPIZZA TROVATI qui sotto. NON inventare mai link. Se non trovi il prodotto nei PRODOTTI TROVATI, manda il cliente su starpizza.org/negozio senza inventare URL.\n"
         "- EMAIL: chiedi solo per preventivi, resi o assistenza.\n"
-        "- RIORDINO: se il cliente chiede di ordinare qualcosa 'come l'ultima volta', 'uguale all'ultimo ordine' o simile, e non hai ancora la sua P.IVA o Codice Fiscale in questa conversazione, chiedigli SOLO quello (ragione sociale e P.IVA/CF) prima di proseguire. Se piu' sotto trovi uno STORICO ORDINI REALI, usa SOLO quei dati per rispondere, mai inventare. Quando il cliente ha CONFERMATO chiaramente ed esplicitamente quali prodotti e quali quantita' vuole riordinare (anche se diverse da quelle originali), usa lo strumento crea_preventivo per preparare la bozza. NON usarlo per semplici domande o se la conferma non e' chiara al 100%.\n"
-        + docs_ctx + email_ctx + products_ctx + correzioni_ctx + storico_ctx
+        "- RIORDINO: se il cliente vuole ordinare qualcosa 'come l'ultima volta' o chiede del suo storico ordini, in QUALSIASI lingua o formulazione, chiedigli P.IVA o Codice Fiscale se non li ha ancora dati in questa conversazione, poi usa lo strumento cerca_storico_cliente. Usa SOLO i dati reali che ti torna lo strumento per rispondere, mai inventare prodotti. Quando il cliente ha CONFERMATO chiaramente ed esplicitamente quali prodotti e quali quantita' vuole (anche prodotti diversi da quelli storici, se te li specifica), usa lo strumento crea_preventivo. NON usarlo per semplici domande o se la conferma non e' chiara al 100%.\n"
+        "- ESITO STRUMENTO crea_preventivo: leggi SEMPRE il campo 'ok' nel risultato dello strumento prima di rispondere. Se ok=true, conferma il preventivo al cliente con numero/importo. Se ok=false (qualsiasi errore, incluso 'errore_tipo'), NON dire MAI che l'ordine e' stato registrato o che il preventivo arrivera' — sarebbe una bugia. Invece, scusati per il problema tecnico e indirizza il cliente a scrivere a info@starpizza.org con i dettagli, cosi' il team puo' procedere a mano. Se l'errore riguarda l'email mancante, chiedi l'email invece di scrivere a info@starpizza.org.\n"
+        + docs_ctx + email_ctx + products_ctx + correzioni_ctx
     )
     history.append({"role": "user", "content": message})
 
-    STRUMENTI = [{
-        "name": "crea_preventivo",
-        "description": "Crea una bozza di preventivo/proforma su FattureInCloud per il cliente gia' identificato in questa conversazione (P.IVA/CF gia' noti). Usalo SOLO dopo che il cliente ha confermato ESPLICITAMENTE quali prodotti e quali quantita' vuole riordinare. Non usarlo per semplici domande o richieste di informazioni.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "righe": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "prodotto_nome": {"type": "string"},
-                            "prodotto_codice": {"type": "string"},
-                            "quantita": {"type": "number"}
-                        },
-                        "required": ["prodotto_nome", "quantita"]
-                    }
+    STRUMENTI = [
+        {
+            "name": "cerca_storico_cliente",
+            "description": "Cerca lo storico ordini reale di un cliente su FattureInCloud, dati P.IVA e/o Codice Fiscale. Usalo quando il cliente vuole riordinare qualcosa 'come l'ultima volta' o chiede informazioni sui suoi ordini passati, in QUALSIASI lingua o formulazione, e ti ha dato un identificativo (P.IVA o CF, in qualsiasi formato/paese — normalizza togliendo spazi/trattini ma mantieni eventuali lettere del prefisso paese se presenti, es. DE123456789). Se il cliente ha gia' fornito questi dati in un messaggio precedente di questa conversazione, riusa quelli senza richiederli di nuovo.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "piva": {"type": "string"},
+                    "cf": {"type": "string"}
                 }
-            },
-            "required": ["righe"]
+            }
+        },
+        {
+            "name": "crea_preventivo",
+            "description": "Crea una bozza di preventivo/proforma su FattureInCloud per un cliente. Usalo SOLO dopo che il cliente ha confermato ESPLICITAMENTE quali prodotti e quali quantita' vuole, e dopo aver gia' identificato il cliente (con cerca_storico_cliente o perche' P.IVA/CF sono gia' noti da questa conversazione). Non usarlo per semplici domande o se la conferma non e' chiara al 100%.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "piva": {"type": "string"},
+                    "cf": {"type": "string"},
+                    "email_cliente": {"type": "string", "description": "L'email del cliente, se l'ha data in questa conversazione (es. perche' gliel'hai chiesta perche' mancava)."},
+                    "righe": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "prodotto_nome": {"type": "string"},
+                                "prodotto_codice": {"type": "string"},
+                                "quantita": {"type": "number"}
+                            },
+                            "required": ["prodotto_nome", "quantita"]
+                        }
+                    }
+                },
+                "required": ["righe"]
+            }
         }
-    }] if (piva_rilevata or cf_rilevato) else []
+    ]
 
     try:
-        msg = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=500,
-            system=system,
-            thinking={"type": "disabled"},
-            tools=STRUMENTI,
-            messages=history
-        )
+        response = ""
+        fallimento_preventivo = None
 
-        if msg.stop_reason == "tool_use":
-            tool_block = next((b for b in msg.content if b.type == "tool_use"), None)
+        for _ in range(6):
+            msg = client.messages.create(
+                model="claude-sonnet-5",
+                max_tokens=500,
+                system=system,
+                thinking={"type": "disabled"},
+                tools=STRUMENTI,
+                messages=history
+            )
 
-            righe = tool_block.input.get("righe", []) if tool_block else []
-            email_dalla_conversazione = None
-            for m in reversed(history):
-                if m.get("role") == "user" and isinstance(m.get("content"), str):
-                    email_dalla_conversazione = estrai_email(m["content"])
-                    if email_dalla_conversazione:
-                        break
-            esito = crea_preventivo_arcanum(piva_rilevata, cf_rilevato, righe, email_cliente=email_dalla_conversazione)
+            if msg.stop_reason != "tool_use":
+                response = next((b.text for b in msg.content if b.type == "text"), "").strip()
+                history.append({"role": "assistant", "content": response})
+                break
 
+            tool_block = next(b for b in msg.content if b.type == "tool_use")
             history.append({"role": "assistant", "content": msg.content})
+
+            if tool_block.name == "cerca_storico_cliente":
+                esito = cerca_storico_cliente(piva=tool_block.input.get("piva"), cf=tool_block.input.get("cf"))
+
+            elif tool_block.name == "crea_preventivo":
+                email_dalla_conversazione = tool_block.input.get("email_cliente")
+                if not email_dalla_conversazione:
+                    for m in reversed(history):
+                        if m.get("role") == "user" and isinstance(m.get("content"), str):
+                            email_dalla_conversazione = estrai_email(m["content"])
+                            if email_dalla_conversazione:
+                                break
+                esito = crea_preventivo_arcanum(
+                    tool_block.input.get("piva"), tool_block.input.get("cf"),
+                    tool_block.input.get("righe", []), email_cliente=email_dalla_conversazione)
+                if not esito.get("ok"):
+                    fallimento_preventivo = esito
+            else:
+                esito = {"errore": "Strumento sconosciuto"}
+
             history.append({"role": "user", "content": [{
                 "type": "tool_result",
                 "tool_use_id": tool_block.id,
                 "content": json.dumps(esito, ensure_ascii=False)
             }]})
 
-            msg2 = client.messages.create(
-                model="claude-sonnet-5",
-                max_tokens=200,
-                system=system,
-                thinking={"type": "disabled"},
-                messages=history
-            )
-            response = next((b.text for b in msg2.content if b.type == "text"), "").strip()
-            history.append({"role": "assistant", "content": response})
+            if fallimento_preventivo:
+                # Non lasciamo che sia Claude a formulare liberamente la risposta
+                # in caso di fallimento: costruiamo noi il messaggio, cosi' non
+                # rischiamo mai una falsa conferma al cliente.
+                if fallimento_preventivo.get("errore_tipo") == "email_mancante":
+                    response = "Prima di procedere con il preventivo mi serve la tua email, così posso inviartelo. Puoi scrivermela?"
+                else:
+                    response = ("Grazie, ma c'è stato un problema tecnico nella creazione automatica del preventivo. "
+                                "Ti chiedo di scrivere a **info@starpizza.org** indicando P.IVA/CF e i prodotti richiesti: "
+                                "il nostro team le invierà l'offerta al più presto.")
+                history.append({"role": "assistant", "content": response})
+                break
         else:
-            response = next((b.text for b in msg.content if b.type == "text"), "").strip()
+            response = "Scusa, non sono riuscita a completare la richiesta — puoi riprovare o riformulare?"
             history.append({"role": "assistant", "content": response})
 
         if len(history) > 40:
